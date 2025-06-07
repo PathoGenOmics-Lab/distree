@@ -1,10 +1,11 @@
+
+<p align="center">
+  <img src=".github/logo/distree.png" title="pdistree" style="width:750px; height: auto;">
+</p>
+
 # distree
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-brightgreen.svg)](https://github.com/PathoGenOmics-Lab/distree/blob/main/LICENSE)
-<p align="center">
-  <a href="">
-    <img src="" alt="distree">
-  </a>
-</p>
+
 
 __Paula Ruiz-Rodriguez<sup>1</sup>__ 
 __and Mireia Coscolla<sup>1</sup>__
