@@ -108,7 +108,7 @@ Options:
 * `--topology`
 
   * Ignores branch lengths. Each entry (i, j) equals the number of edges between leaf i and leaf j:
-    $\text{topo\_dist}(i,j) = \text{depth\_top}[i] + \text{depth\_top}[j] - 2 \times \text{depth\_top}[\text{MRCA}(i,j)]$
+
   * Use this mode if branch-lengths are not meaningful or if you only care about tree shape.
 
 * `-o, --output <FILE>`
