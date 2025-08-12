@@ -39,7 +39,7 @@ struct RawNode {
 fn main() -> io::Result<()> {
     // ========== 1. Parse command-line arguments ==========
     let matches = Command::new("distree")
-        .version("1.0")
+        .version("1.0.0")
         .author("Paula Ruiz-Rodriguez")
         .about("Extracts a distance matrix from a phylogeny (parallel, low-memory)")
         .arg(
