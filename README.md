@@ -1,11 +1,13 @@
-
 <p align="center">
   <img src=".github/logo/distree.png" title="pdistree" style="width:750px; height: auto;">
 </p>
 
 # distree
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-brightgreen.svg)](https://github.com/PathoGenOmics-Lab/distree/blob/main/LICENSE)
-
+[![distree](https://img.shields.io/badge/distree-rust-%23ff8000)](https://github.com/PathoGenOmics-Lab/distree)
+[![Anaconda-Server Badge](https://img.shields.io/conda/dn/bioconda/distree.svg?style=flat-square)](https://anaconda.org/bioconda/distree)
+[![Anaconda-Version Badge](https://anaconda.org/bioconda/distree/badges/version.svg)](https://anaconda.org/bioconda/distree)
+[![PGO](https://img.shields.io/badge/PathoGenOmics-lab-red?style=flat-square)](https://github.com/PathoGenOmics-Lab)
 
 __Paula Ruiz-Rodriguez<sup>1</sup>__ 
 __and Mireia Coscolla<sup>1</sup>__
@@ -52,6 +54,15 @@ __and Mireia Coscolla<sup>1</sup>__
 
 ## Installation
 
+### 🐍 Using conda
+```
+conda install -c bioconda distree
+```
+### 🐍 Using mamba
+```
+mamba install -c bioconda distree
+```
+### Compilation
 1. Ensure you have [Rust](https://www.rust-lang.org/tools/install) installed.
 
 2. Clone or download the `distree` repository.
@@ -281,5 +292,3 @@ This project follows the [all-contributors](https://github.com/all-contributors/
 
 <!-- markdownlint-restore -->
 <!-- prettier-ignore-end -->
-
-
