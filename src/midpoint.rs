@@ -154,7 +154,7 @@ pub fn midpoint_root(root_idx: usize, nodes: &mut Vec<Node>) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{flatten_raw, parse_subtree};
+    use crate::parser::{flatten_raw, parse_newick};
     use crate::lca::build_lca_structure;
 
     fn patristic_distance(
@@ -171,8 +171,7 @@ mod tests {
         // ((A:1,B:1):1,(C:1,D:1):1);
         // Diameter = 4 (e.g. A→root→D), midpoint at distance 2
         let input = "((A:1,B:1):1,(C:1,D:1):1);";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick(input).unwrap();
         let mut nodes = Vec::new();
         let root = flatten_raw(&raw, None, &mut nodes);
         let new_root = midpoint_root(root, &mut nodes);
@@ -210,8 +209,7 @@ mod tests {
         // (A:1.0,B:3.0);
         // Diameter = 4, midpoint at distance 2 from each
         let input = "(A:1.0,B:3.0);";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick(input).unwrap();
         let mut nodes = Vec::new();
         let root = flatten_raw(&raw, None, &mut nodes);
         let new_root = midpoint_root(root, &mut nodes);
@@ -227,8 +225,7 @@ mod tests {
     #[test]
     fn test_midpoint_preserves_distances() {
         let input = "(((A:0.5,B:0.3):0.4,C:0.9):0.1,D:1.2);";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick(input).unwrap();
 
         // Compute distances before midpoint rooting
         let mut nodes_before = Vec::new();
@@ -254,8 +251,9 @@ mod tests {
         }
 
         // Now midpoint root
+        let raw2 = parse_newick(input).unwrap();
         let mut nodes_after = Vec::new();
-        let root_after = flatten_raw(&raw, None, &mut nodes_after);
+        let root_after = flatten_raw(&raw2, None, &mut nodes_after);
         let new_root = midpoint_root(root_after, &mut nodes_after);
         let lca_after = build_lca_structure(new_root, &nodes_after);
 

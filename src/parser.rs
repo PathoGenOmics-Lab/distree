@@ -1,6 +1,4 @@
-use std::iter::Peekable;
 use std::num::ParseFloatError;
-use std::str::Chars;
 
 use crate::tree::Node;
 
@@ -11,164 +9,224 @@ pub struct RawNode {
     pub children: Vec<RawNode>,
 }
 
-/// Recursively parse a Newick subtree and return a `RawNode`.
-pub fn parse_subtree(chars: &mut Peekable<Chars>) -> Result<RawNode, String> {
-    let mut node = RawNode {
-        name: None,
-        length: 0.0,
-        children: Vec::new(),
-    };
-
-    if let Some(&c) = chars.peek() {
-        if c == '(' {
-            chars.next();
-            loop {
-                let child = parse_subtree(chars)?;
-                node.children.push(child);
-                match chars.peek() {
-                    Some(',') => {
-                        chars.next();
-                        continue;
-                    }
-                    Some(')') => {
-                        chars.next();
-                        break;
-                    }
-                    Some(other) => {
-                        return Err(format!("Expected ',' or ')', found '{}'", other));
-                    }
-                    None => return Err("Unexpected end of input after '('".to_string()),
-                }
-            }
-
-            // After ')', skip any NHX/bracket comments
-            skip_comments(chars);
-
-            // Optional internal node label
-            if let Some(&c2) = chars.peek() {
-                if c2 != ':' && c2 != ',' && c2 != ')' && c2 != ';' {
-                    let name = parse_label(chars);
-                    if !name.is_empty() {
-                        node.name = Some(name);
-                    }
-                }
-            }
-
-            // Skip comments after label too
-            skip_comments(chars);
-
-            if let Some(&':') = chars.peek() {
-                chars.next();
-                let length = parse_length(chars)?;
-                node.length = length;
-            }
-
-            // Skip comments after branch length
-            skip_comments(chars);
-
-            return Ok(node);
-        }
-    }
-
-    // Leaf node
-    let name = parse_label(chars);
-    if !name.is_empty() {
-        node.name = Some(name);
-    }
-
-    // Skip comments after label
-    skip_comments(chars);
-
-    if let Some(&':') = chars.peek() {
-        chars.next();
-        let length = parse_length(chars)?;
-        node.length = length;
-    }
-
-    // Skip comments after branch length
-    skip_comments(chars);
-
-    Ok(node)
+/// Parse a complete Newick tree from a string.
+/// Strips whitespace outside of quoted labels before parsing.
+pub fn parse_newick(input: &str) -> Result<RawNode, String> {
+    // Pre-process: strip whitespace outside of single/double quotes
+    let cleaned = strip_whitespace_outside_quotes(input.trim());
+    let bytes = cleaned.as_bytes();
+    let mut pos = 0;
+    let root = parse_subtree_iterative(bytes, &mut pos)?;
+    Ok(root)
 }
 
-/// Parse a node label. Supports single-quoted labels (strips quotes).
-pub fn parse_label(chars: &mut Peekable<Chars>) -> String {
-    // Handle single-quoted labels
-    if let Some(&c) = chars.peek() {
-        if c == '\'' {
-            chars.next(); // consume opening quote
-            let mut label = String::new();
-            while let Some(&ch) = chars.peek() {
-                if ch == '\'' {
-                    chars.next(); // consume closing quote
-                    break;
-                }
-                label.push(ch);
-                chars.next();
+/// Strip whitespace characters outside of quoted regions.
+fn strip_whitespace_outside_quotes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_quote = false;
+    let mut quote_char = b'\0';
+    for &b in s.as_bytes() {
+        if in_quote {
+            out.push(b as char);
+            if b == quote_char {
+                in_quote = false;
             }
-            return label;
+        } else if b == b'\'' || b == b'"' {
+            in_quote = true;
+            quote_char = b;
+            out.push(b as char);
+        } else if !b.is_ascii_whitespace() {
+            out.push(b as char);
         }
     }
+    out
+}
 
+/// Iterative Newick parser — no stack overflow on deep trees.
+fn parse_subtree_iterative(bytes: &[u8], pos: &mut usize) -> Result<RawNode, String> {
+    // We use an explicit stack to avoid recursion.
+    // Each frame represents a node being constructed.
+    struct Frame {
+        node: RawNode,
+    }
+
+    let mut stack: Vec<Frame> = Vec::new();
+
+    loop {
+        // Decide what to parse at current position
+        let current_node = if *pos < bytes.len() && bytes[*pos] == b'(' {
+            // Internal node: push frame, advance past '('
+            *pos += 1;
+            skip_whitespace_bytes(bytes, pos);
+            stack.push(Frame {
+                node: RawNode { name: None, length: 0.0, children: Vec::new() },
+            });
+            continue; // loop back to parse first child
+        } else {
+            // Leaf node
+            let name = parse_label_bytes(bytes, pos);
+            skip_comments_bytes(bytes, pos);
+            let length = parse_optional_length(bytes, pos)?;
+            skip_comments_bytes(bytes, pos);
+            let mut leaf = RawNode { name: None, length, children: Vec::new() };
+            if !name.is_empty() {
+                leaf.name = Some(name);
+            }
+            leaf
+        };
+
+        // Now we have a completed node. Feed it back up the stack.
+        let mut completed = current_node;
+        loop {
+            if let Some(frame) = stack.last_mut() {
+                frame.node.children.push(completed);
+                // Check what comes next: ',' means more children, ')' means done
+                if *pos < bytes.len() && bytes[*pos] == b',' {
+                    *pos += 1;
+                    skip_whitespace_bytes(bytes, pos);
+                    break; // break inner loop, continue outer to parse next child
+                } else if *pos < bytes.len() && bytes[*pos] == b')' {
+                    *pos += 1;
+                    // Internal node complete — read its label and length
+                    skip_comments_bytes(bytes, pos);
+                    let name = parse_label_bytes(bytes, pos);
+                    skip_comments_bytes(bytes, pos);
+                    let length = parse_optional_length(bytes, pos)?;
+                    skip_comments_bytes(bytes, pos);
+
+                    let mut frame = stack.pop().unwrap();
+                    if !name.is_empty() {
+                        frame.node.name = Some(name);
+                    }
+                    frame.node.length = length;
+                    completed = frame.node;
+                    // continue inner loop to feed this up further
+                } else if *pos >= bytes.len() {
+                    // End of input while inside parentheses
+                    let frame = stack.pop().unwrap();
+                    completed = frame.node;
+                } else {
+                    let ch = bytes[*pos] as char;
+                    return Err(format!("Expected ',' or ')', found '{}' at position {}", ch, *pos));
+                }
+            } else {
+                // Stack empty — this is the root
+                return Ok(completed);
+            }
+        }
+    }
+}
+
+fn skip_whitespace_bytes(bytes: &[u8], pos: &mut usize) {
+    while *pos < bytes.len() && bytes[*pos].is_ascii_whitespace() {
+        *pos += 1;
+    }
+}
+
+/// Parse a node label from bytes. Supports single-quoted and double-quoted labels.
+fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> String {
+    if *pos >= bytes.len() {
+        return String::new();
+    }
+
+    // Handle quoted labels (single or double quotes)
+    let ch = bytes[*pos];
+    if ch == b'\'' || ch == b'"' {
+        *pos += 1; // consume opening quote
+        let mut label = String::new();
+        while *pos < bytes.len() {
+            if bytes[*pos] == ch {
+                *pos += 1; // consume closing quote
+                break;
+            }
+            label.push(bytes[*pos] as char);
+            *pos += 1;
+        }
+        return label;
+    }
+
+    // Unquoted label: read until delimiter
     let mut label = String::new();
-    while let Some(&c) = chars.peek() {
-        if c == ':' || c == ',' || c == ')' || c == ';' || c == '[' || c.is_whitespace() {
+    while *pos < bytes.len() {
+        let c = bytes[*pos];
+        if c == b':' || c == b',' || c == b')' || c == b';' || c == b'[' || c.is_ascii_whitespace() {
             break;
         }
-        label.push(c);
-        chars.next();
+        label.push(c as char);
+        *pos += 1;
     }
     label
 }
 
 /// Skip '[...]' comment blocks (NHX annotations, BEAST metadata, etc.).
-fn skip_comments(chars: &mut Peekable<Chars>) {
-    while let Some(&'[') = chars.peek() {
-        chars.next();
-        let mut depth = 1;
-        while depth > 0 {
-            match chars.next() {
-                Some('[') => depth += 1,
-                Some(']') => depth -= 1,
-                None => break,
+/// Handles nested brackets.
+fn skip_comments_bytes(bytes: &[u8], pos: &mut usize) {
+    while *pos < bytes.len() && bytes[*pos] == b'[' {
+        *pos += 1;
+        let mut depth: usize = 1;
+        while *pos < bytes.len() && depth > 0 {
+            match bytes[*pos] {
+                b'[' => depth += 1,
+                b']' => depth -= 1,
                 _ => {}
             }
+            *pos += 1;
         }
     }
 }
 
-/// Parse a floating-point branch length (supports scientific notation).
-pub fn parse_length(chars: &mut Peekable<Chars>) -> Result<f64, String> {
-    let mut numstr = String::new();
-    while let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-' {
-            numstr.push(c);
-            chars.next();
+/// Parse optional ":length" — returns 0.0 if no colon present.
+fn parse_optional_length(bytes: &[u8], pos: &mut usize) -> Result<f64, String> {
+    if *pos < bytes.len() && bytes[*pos] == b':' {
+        *pos += 1;
+        parse_length_bytes(bytes, pos)
+    } else {
+        Ok(0.0)
+    }
+}
+
+/// Parse a floating-point branch length (supports scientific notation and negative values).
+fn parse_length_bytes(bytes: &[u8], pos: &mut usize) -> Result<f64, String> {
+    let start = *pos;
+    while *pos < bytes.len() {
+        let c = bytes[*pos];
+        if c.is_ascii_digit() || c == b'.' || c == b'e' || c == b'E' || c == b'+' || c == b'-' {
+            *pos += 1;
         } else {
             break;
         }
     }
+    let numstr = std::str::from_utf8(&bytes[start..*pos])
+        .map_err(|_| "Invalid UTF-8 in branch length".to_string())?;
     numstr
         .parse::<f64>()
         .map_err(|e: ParseFloatError| format!("Failed to parse branch length '{}': {}", numstr, e))
 }
 
-/// Recursively flatten a `RawNode` into a flat `Vec<Node>`, returning the index of the new node.
+/// Flatten a `RawNode` tree into a flat `Vec<Node>` iteratively (no stack overflow).
 pub fn flatten_raw(raw: &RawNode, parent: Option<usize>, nodes: &mut Vec<Node>) -> usize {
-    let idx = nodes.len();
-    nodes.push(Node {
-        name: raw.name.clone(),
-        length: raw.length,
-        parent,
-        children: Vec::new(),
-    });
-    if let Some(p) = parent {
-        nodes[p].children.push(idx);
+    // Stack of (raw_node_ref, parent_index)
+    let mut stack: Vec<(&RawNode, Option<usize>)> = vec![(raw, parent)];
+    let root_idx = nodes.len();
+
+    while let Some((raw_node, par)) = stack.pop() {
+        let idx = nodes.len();
+        nodes.push(Node {
+            name: raw_node.name.clone(),
+            length: raw_node.length,
+            parent: par,
+            children: Vec::new(),
+        });
+        if let Some(p) = par {
+            nodes[p].children.push(idx);
+        }
+        // Push children in reverse order so they're processed left-to-right
+        for child in raw_node.children.iter().rev() {
+            stack.push((child, Some(idx)));
+        }
     }
-    for child in &raw.children {
-        flatten_raw(child, Some(idx), nodes);
-    }
-    idx
+
+    root_idx
 }
 
 #[cfg(test)]
@@ -177,9 +235,7 @@ mod tests {
 
     #[test]
     fn test_parse_simple_tree() {
-        let input = "(A:1.0,B:2.0);";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick("(A:1.0,B:2.0);").unwrap();
         assert_eq!(raw.children.len(), 2);
         assert_eq!(raw.children[0].name.as_deref(), Some("A"));
         assert_eq!(raw.children[0].length, 1.0);
@@ -189,9 +245,7 @@ mod tests {
 
     #[test]
     fn test_parse_internal_labels() {
-        let input = "((A:1.0,B:2.0)inner:0.5,C:3.0);";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick("((A:1.0,B:2.0)inner:0.5,C:3.0);").unwrap();
         assert_eq!(raw.children.len(), 2);
         assert_eq!(raw.children[0].name.as_deref(), Some("inner"));
         assert_eq!(raw.children[0].length, 0.5);
@@ -200,9 +254,7 @@ mod tests {
 
     #[test]
     fn test_parse_no_branch_lengths() {
-        let input = "(A,B,(C,D));";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick("(A,B,(C,D));").unwrap();
         assert_eq!(raw.children.len(), 3);
         assert_eq!(raw.children[0].length, 0.0);
         assert_eq!(raw.children[2].children.len(), 2);
@@ -210,9 +262,7 @@ mod tests {
 
     #[test]
     fn test_parse_nhx_comments() {
-        let input = "((A:0.1[&&NHX:S=human],B:0.2[&&NHX:S=mouse]):0.3,C:0.4);";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick("((A:0.1[&&NHX:S=human],B:0.2[&&NHX:S=mouse]):0.3,C:0.4);").unwrap();
         assert_eq!(raw.children.len(), 2);
         let inner = &raw.children[0];
         assert_eq!(inner.children[0].name.as_deref(), Some("A"));
@@ -223,32 +273,32 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_quoted_labels() {
-        let input = "('Taxon A':1.0,'Taxon B':2.0);";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+    fn test_parse_quoted_labels_single() {
+        let raw = parse_newick("('Taxon A':1.0,'Taxon B':2.0);").unwrap();
+        assert_eq!(raw.children[0].name.as_deref(), Some("Taxon A"));
+        assert_eq!(raw.children[1].name.as_deref(), Some("Taxon B"));
+    }
+
+    #[test]
+    fn test_parse_quoted_labels_double() {
+        let raw = parse_newick(r#"("Taxon A":1.0,"Taxon B":2.0);"#).unwrap();
         assert_eq!(raw.children[0].name.as_deref(), Some("Taxon A"));
         assert_eq!(raw.children[1].name.as_deref(), Some("Taxon B"));
     }
 
     #[test]
     fn test_parse_scientific_notation() {
-        let input = "(A:1.5e-3,B:2.0E+1);";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick("(A:1.5e-3,B:2.0E+1);").unwrap();
         assert!((raw.children[0].length - 0.0015).abs() < 1e-10);
         assert!((raw.children[1].length - 20.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_flatten() {
-        let input = "((A:1.0,B:2.0):0.5,C:3.0);";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick("((A:1.0,B:2.0):0.5,C:3.0);").unwrap();
         let mut nodes = Vec::new();
         let root = flatten_raw(&raw, None, &mut nodes);
         assert_eq!(root, 0);
-        // root -> (inner, C), inner -> (A, B) = 5 nodes
         assert_eq!(nodes.len(), 5);
         assert!(nodes[0].parent.is_none());
         assert_eq!(nodes[0].children.len(), 2);
@@ -256,10 +306,54 @@ mod tests {
 
     #[test]
     fn test_bracket_in_label_position() {
-        let input = "((A:0.1[comment],B:0.2):0.3[more],C:0.4[x]);";
-        let mut chars = input.chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick("((A:0.1[comment],B:0.2):0.3[more],C:0.4[x]);").unwrap();
         assert_eq!(raw.children[0].children[0].name.as_deref(), Some("A"));
         assert_eq!(raw.children[1].name.as_deref(), Some("C"));
+    }
+
+    #[test]
+    fn test_whitespace_in_newick() {
+        let raw = parse_newick("( A:1.0 , B:2.0 ) ;").unwrap();
+        assert_eq!(raw.children.len(), 2);
+        assert_eq!(raw.children[0].name.as_deref(), Some("A"));
+        assert_eq!(raw.children[1].name.as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn test_newlines_in_newick() {
+        let raw = parse_newick("((A:1.0,\nB:2.0):0.5,\nC:3.0);\n").unwrap();
+        assert_eq!(raw.children.len(), 2);
+    }
+
+    #[test]
+    fn test_deep_tree_no_stack_overflow() {
+        // Build a caterpillar tree with 5,000 levels using push (no recursive format!)
+        let mut tree = String::with_capacity(200_000);
+        for _ in 0..5_000 {
+            tree.push('(');
+        }
+        tree.push_str("A:0.1");
+        for i in 1..=5_000 {
+            tree.push_str(&format!(",T{}:0.1):0.01", i));
+        }
+        tree.push(';');
+        let raw = parse_newick(&tree).unwrap();
+        // Should not stack overflow; just verify it parsed
+        let mut nodes = Vec::new();
+        let root = flatten_raw(&raw, None, &mut nodes);
+        assert!(nodes.len() > 5_000);
+        assert!(nodes[root].parent.is_none());
+    }
+
+    #[test]
+    fn test_nested_brackets() {
+        let raw = parse_newick("((A:0.1[&rate=0.5[inner]],B:0.2):0.3,C:0.4);").unwrap();
+        assert_eq!(raw.children[0].children[0].name.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn test_negative_branch_length_parsed() {
+        let raw = parse_newick("(A:-0.5,B:2.0);").unwrap();
+        assert!((raw.children[0].length - (-0.5)).abs() < 1e-10);
     }
 }

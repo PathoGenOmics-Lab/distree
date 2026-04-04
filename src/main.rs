@@ -11,7 +11,7 @@ use std::io::{self, BufWriter, Read, Write};
 
 use lca::build_lca_structure;
 use midpoint::midpoint_root;
-use parser::{flatten_raw, parse_subtree};
+use parser::{flatten_raw, parse_newick};
 use tree::Node;
 
 fn main() -> io::Result<()> {
@@ -74,6 +74,11 @@ fn main() -> io::Result<()> {
     let do_midpoint = *matches.get_one::<bool>("midpoint").unwrap();
     let do_lmm = *matches.get_one::<bool>("lmm").unwrap();
     let do_topology = *matches.get_one::<bool>("topology").unwrap();
+
+    // Warn if conflicting options
+    if do_lmm && do_topology {
+        eprintln!("Warning: --lmm and --topology are mutually exclusive. Using --lmm.");
+    }
     let output_path = matches.get_one::<String>("output");
     let precision = *matches.get_one::<usize>("precision").unwrap();
 
@@ -101,13 +106,10 @@ fn main() -> io::Result<()> {
     }
 
     // Parse the Newick string
-    let mut chars = newick_str.trim().chars().peekable();
-    let raw_root = parse_subtree(&mut chars).expect("Failed to parse Newick tree");
-    if let Some(&c) = chars.peek() {
-        if c == ';' {
-            chars.next();
-        }
-    }
+    let raw_root = parse_newick(&newick_str).unwrap_or_else(|e| {
+        eprintln!("Failed to parse Newick tree: {}", e);
+        std::process::exit(1);
+    });
 
     // Flatten into Vec<Node>
     let mut nodes: Vec<Node> = Vec::new();
@@ -211,7 +213,11 @@ fn main() -> io::Result<()> {
         writer.write_all(sorted_labels[row_i].as_bytes())?;
         for dist in this_row.iter() {
             writer.write_all(b"\t")?;
-            write!(writer, "{:.prec$}", dist, prec = prec)?;
+            if do_topology {
+                write!(writer, "{}", *dist as i64)?;
+            } else {
+                write!(writer, "{:.prec$}", dist, prec = prec)?;
+            }
         }
         writer.write_all(b"\n")?;
     }
@@ -224,8 +230,7 @@ mod tests {
     use super::*;
 
     fn build_tree(newick: &str) -> (Vec<Node>, usize) {
-        let mut chars = newick.trim().chars().peekable();
-        let raw = parse_subtree(&mut chars).unwrap();
+        let raw = parse_newick(newick).unwrap();
         let mut nodes = Vec::new();
         let root = flatten_raw(&raw, None, &mut nodes);
         (nodes, root)
