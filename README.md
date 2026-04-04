@@ -92,7 +92,7 @@ Options:
       --midpoint             Midpoint-root the tree before computing distances
       --lmm                  Produce the var-covar matrix C (depth of the MRCA)
       --topology             Ignore branch lengths; use purely topological distances
-      --lower                Output only the lower triangle (PHYLIP-compatible)
+      --lower                Output PHYLIP lower-triangle format (taxa count, row labels, no diagonal)
   -o, --output <FILE>        Path to write the TSV output file (defaults to stdout)
   -p, --precision <N>        Number of decimal places for output [default: 10]
   -t, --threads <N>          Number of parallel threads (default: all cores)
@@ -110,7 +110,7 @@ Options:
 
 * `--topology`: Number of edges between leaves (integers). Ignores branch lengths.
 
-* `--lower`: Lower triangle only, no header or diagonal. Useful for PHYLIP-compatible input or to halve file size.
+* `--lower`: PHYLIP lower-triangle format. Outputs a header line with the number of taxa, followed by one row per taxon with its label and the lower triangle of distances (no diagonal). Compatible with PHYLIP, Mash, and tools expecting this standard format.
 
 * `-p, --precision <N>`: Decimal places in output (default: 10). Applies to patristic and LMM modes.
 

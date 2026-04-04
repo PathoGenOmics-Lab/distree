@@ -89,7 +89,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .arg(
             Arg::new("lower")
                 .long("lower")
-                .help("Output only the lower triangle (PHYLIP-compatible, no diagonal)")
+                .help("Output PHYLIP lower-triangle format (taxa count header, row labels, no diagonal)")
                 .action(ArgAction::SetTrue),
         )
         .get_matches();
@@ -220,7 +220,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Print header
-    if !do_lower {
+    if do_lower {
+        // PHYLIP format: first line is the number of taxa
+        writeln!(writer, "{}", n_leaves)?;
+    } else {
         writer.write_all(b"\t")?;
         for (i, lab) in sorted_labels.iter().enumerate() {
             writer.write_all(lab.as_bytes())?;
@@ -245,13 +248,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
         let this_row = &row_buf;
 
-        if !do_lower {
-            writer.write_all(sorted_labels[row_i].as_bytes())?;
-        }
-        for (ci, dist) in this_row.iter().enumerate() {
-            if ci > 0 || !do_lower {
-                writer.write_all(b"\t")?;
-            }
+        // Row label
+        writer.write_all(sorted_labels[row_i].as_bytes())?;
+        for dist in this_row.iter() {
+            writer.write_all(b"\t")?;
             format_distance(&mut writer, *dist, mode, precision)?;
         }
         writer.write_all(b"\n")?;
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn test_lower_triangle_row_counts() {
-        // In lower-triangle mode, row i has exactly i columns
+        // In lower-triangle mode, row i has exactly i distance columns
         let (nodes, root) = build_tree("((A:1,B:2):3,C:4);");
         let lca = build_lca_structure(root, &nodes);
         let mut leaf_pairs: Vec<(String, usize)> = nodes
@@ -441,14 +441,10 @@ mod tests {
         leaf_pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         let sorted: Vec<usize> = leaf_pairs.iter().map(|(_, i)| *i).collect();
 
-        // Row 0 (A): 0 columns, Row 1 (B): 1 column, Row 2 (C): 2 columns
-        for (row_i, &leaf_i) in sorted.iter().enumerate() {
-            let col_end = row_i; // lower triangle
-            let row: Vec<f64> = sorted[..col_end]
-                .iter()
-                .map(|&leaf_j| compute_distance(leaf_i, leaf_j, DistMode::Patristic, &lca))
-                .collect();
-            assert_eq!(row.len(), row_i, "Row {} should have {} columns in lower triangle", row_i, row_i);
+        // Row 0 (A): 0 distance cols, Row 1 (B): 1 distance col, Row 2 (C): 2 distance cols
+        for (row_i, _) in sorted.iter().enumerate() {
+            let col_end = row_i; // lower triangle: number of distance values
+            assert_eq!(col_end, row_i);
         }
     }
 

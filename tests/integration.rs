@@ -89,14 +89,20 @@ fn test_binary_lower_triangle() {
     let (code, stdout, _) = run(&["--lower", tree.to_str().unwrap()], None);
     assert_eq!(code, 0);
     let lines: Vec<&str> = stdout.lines().collect();
-    // Lower triangle: 3 leaves → 3 rows, no header
-    assert_eq!(lines.len(), 3, "should have 3 rows");
-    // Row 0 is empty (no columns for first leaf)
-    assert!(lines[0].is_empty(), "first row should be empty, got: {:?}", lines[0]);
-    // Row 1 has exactly 1 value
-    assert_eq!(lines[1].split('\t').count(), 1, "row 1 should have 1 column");
-    // Row 2 has exactly 2 values separated by a tab
-    assert_eq!(lines[2].split('\t').count(), 2, "row 2 should have 2 columns");
+    // PHYLIP lower triangle: header line (taxa count) + 3 leaf rows
+    assert_eq!(lines.len(), 4, "should have 1 header + 3 rows, got: {:?}", lines);
+    // First line: taxa count
+    assert_eq!(lines[0].trim(), "3", "first line should be taxa count");
+    // Row 0 (A): label only, 0 distance columns
+    assert_eq!(lines[1].trim(), "A", "first data row is just label A");
+    // Row 1 (B): label + 1 distance
+    let cols_b: Vec<&str> = lines[2].split('\t').collect();
+    assert_eq!(cols_b.len(), 2, "row B: label + 1 distance");
+    assert_eq!(cols_b[0], "B");
+    // Row 2 (C): label + 2 distances
+    let cols_c: Vec<&str> = lines[3].split('\t').collect();
+    assert_eq!(cols_c.len(), 3, "row C: label + 2 distances");
+    assert_eq!(cols_c[0], "C");
 }
 
 #[test]
