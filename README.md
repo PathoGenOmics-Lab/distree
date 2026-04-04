@@ -249,7 +249,7 @@ LeafC	5.000	2.500	7.000
 ---
 <h2 id="contributors" align="center">
 
-✨ [Contributors]((https://github.com/PathoGenOmics-Lab/AMAP/graphs/contributors))
+✨ [Contributors](https://github.com/PathoGenOmics-Lab/distree/graphs/contributors)
 </h2>
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
