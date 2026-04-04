@@ -138,17 +138,26 @@ fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> String {
     }
 
     // Handle quoted labels (single or double quotes)
+    // Per the Newick spec, quotes inside a quoted label are escaped by doubling:
+    // 'it''s a name' → it's a name
     let ch = bytes[*pos];
     if ch == b'\'' || ch == b'"' {
         *pos += 1; // consume opening quote
         let mut label = String::new();
         while *pos < bytes.len() {
             if bytes[*pos] == ch {
-                *pos += 1; // consume closing quote
-                break;
+                // Check for escaped quote (doubled)
+                if *pos + 1 < bytes.len() && bytes[*pos + 1] == ch {
+                    label.push(ch as char);
+                    *pos += 2; // skip both quotes
+                } else {
+                    *pos += 1; // consume closing quote
+                    break;
+                }
+            } else {
+                label.push(bytes[*pos] as char);
+                *pos += 1;
             }
-            label.push(bytes[*pos] as char);
-            *pos += 1;
         }
         return label;
     }
@@ -388,6 +397,23 @@ mod tests {
         // ":" followed by non-numeric should error, not panic
         let result = parse_newick("(A:,B:2.0);");
         assert!(result.is_err(), "Expected error for empty branch length");
+    }
+
+    #[test]
+    fn test_escaped_single_quotes_in_labels() {
+        // Newick spec: doubled quotes inside a quoted label are a single literal quote
+        // 'it''s' -> it's
+        let raw = parse_newick(r"('it''s':1.0,B:2.0);").unwrap();
+        assert_eq!(raw.children[0].name.as_deref(), Some("it's"));
+        assert_eq!(raw.children[1].name.as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn test_escaped_double_quotes_in_labels() {
+        // "a ""name""" -> a "name"
+        let input = r#"("a ""name""":1.0,B:2.0);"#;
+        let raw = parse_newick(input).unwrap();
+        assert_eq!(raw.children[0].name.as_deref(), Some(r#"a "name""#));
     }
 
     #[test]
