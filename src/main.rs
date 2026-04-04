@@ -431,7 +431,7 @@ mod tests {
     fn test_lower_triangle_row_counts() {
         // In lower-triangle mode, row i has exactly i distance columns
         let (nodes, root) = build_tree("((A:1,B:2):3,C:4);");
-        let lca = build_lca_structure(root, &nodes);
+        let _lca = build_lca_structure(root, &nodes);
         let mut leaf_pairs: Vec<(String, usize)> = nodes
             .iter()
             .enumerate()

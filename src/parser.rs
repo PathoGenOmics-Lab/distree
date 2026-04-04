@@ -72,7 +72,7 @@ fn parse_subtree_iterative(bytes: &[u8], pos: &mut usize) -> Result<RawNode, Str
             continue; // loop back to parse first child
         } else {
             // Leaf node
-            let name = parse_label_bytes(bytes, pos);
+            let name = parse_label_bytes(bytes, pos)?;
             skip_comments_bytes(bytes, pos);
             let length = parse_optional_length(bytes, pos)?;
             skip_comments_bytes(bytes, pos);
@@ -97,7 +97,7 @@ fn parse_subtree_iterative(bytes: &[u8], pos: &mut usize) -> Result<RawNode, Str
                     *pos += 1;
                     // Internal node complete — read its label and length
                     skip_comments_bytes(bytes, pos);
-                    let name = parse_label_bytes(bytes, pos);
+                    let name = parse_label_bytes(bytes, pos)?;
                     skip_comments_bytes(bytes, pos);
                     let length = parse_optional_length(bytes, pos)?;
                     skip_comments_bytes(bytes, pos);
@@ -132,9 +132,10 @@ fn skip_whitespace_bytes(bytes: &[u8], pos: &mut usize) {
 }
 
 /// Parse a node label from bytes. Supports single-quoted and double-quoted labels.
-fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> String {
+/// Returns an error if a quoted label is not properly closed.
+fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> Result<String, String> {
     if *pos >= bytes.len() {
-        return String::new();
+        return Ok(String::new());
     }
 
     // Handle quoted labels (single or double quotes)
@@ -142,8 +143,10 @@ fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> String {
     // 'it''s a name' → it's a name
     let ch = bytes[*pos];
     if ch == b'\'' || ch == b'"' {
+        let open_pos = *pos;
         *pos += 1; // consume opening quote
         let mut label = String::new();
+        let mut closed = false;
         while *pos < bytes.len() {
             if bytes[*pos] == ch {
                 // Check for escaped quote (doubled)
@@ -152,6 +155,7 @@ fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> String {
                     *pos += 2; // skip both quotes
                 } else {
                     *pos += 1; // consume closing quote
+                    closed = true;
                     break;
                 }
             } else {
@@ -159,7 +163,13 @@ fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> String {
                 *pos += 1;
             }
         }
-        return label;
+        if !closed {
+            return Err(format!(
+                "Unclosed quote starting at position {}.",
+                open_pos
+            ));
+        }
+        return Ok(label);
     }
 
     // Unquoted label: read until delimiter
@@ -172,7 +182,7 @@ fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> String {
         label.push(c as char);
         *pos += 1;
     }
-    label
+    Ok(label)
 }
 
 /// Skip '[...]' comment blocks (NHX annotations, BEAST metadata, etc.).
@@ -424,6 +434,14 @@ mod tests {
         assert!(result.is_ok());
         let raw = result.unwrap();
         assert_eq!(raw.children.len(), 2);
+    }
+
+    #[test]
+    fn test_unclosed_quote_error() {
+        let result = parse_newick("('unclosed:1.0,B:2.0);");
+        assert!(result.is_err(), "Unclosed quote should error");
+        let msg = result.err().expect("should be Err");
+        assert!(msg.contains("Unclosed quote"), "Error message: {}", msg);
     }
 
     #[test]
