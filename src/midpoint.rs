@@ -57,7 +57,8 @@ pub fn midpoint_root(root_idx: usize, nodes: &mut Vec<Node>) -> usize {
             if cur == leaf_a {
                 break;
             }
-            cur = parent_trace[cur].unwrap();
+            cur = parent_trace[cur]
+                .expect("midpoint: path from leaf_b to leaf_a is disconnected; tree may be malformed");
         }
     }
 

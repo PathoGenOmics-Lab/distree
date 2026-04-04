@@ -428,6 +428,41 @@ mod tests {
     }
 
     #[test]
+    fn test_lower_triangle_row_counts() {
+        // In lower-triangle mode, row i has exactly i columns
+        let (nodes, root) = build_tree("((A:1,B:2):3,C:4);");
+        let lca = build_lca_structure(root, &nodes);
+        let mut leaf_pairs: Vec<(String, usize)> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.children.is_empty() && n.name.is_some())
+            .map(|(i, n)| (n.name.clone().unwrap(), i))
+            .collect();
+        leaf_pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let sorted: Vec<usize> = leaf_pairs.iter().map(|(_, i)| *i).collect();
+
+        // Row 0 (A): 0 columns, Row 1 (B): 1 column, Row 2 (C): 2 columns
+        for (row_i, &leaf_i) in sorted.iter().enumerate() {
+            let col_end = row_i; // lower triangle
+            let row: Vec<f64> = sorted[..col_end]
+                .iter()
+                .map(|&leaf_j| compute_distance(leaf_i, leaf_j, DistMode::Patristic, &lca))
+                .collect();
+            assert_eq!(row.len(), row_i, "Row {} should have {} columns in lower triangle", row_i, row_i);
+        }
+    }
+
+    #[test]
+    fn test_patristic_clamped_nonnegative() {
+        // Self-distance must be exactly 0.0 (no negative FP artifacts)
+        let (nodes, root) = build_tree("(A:1.0000000000001,B:1.0000000000002);");
+        let lca = build_lca_structure(root, &nodes);
+        let a = get_leaf(&nodes, "A");
+        let d = compute_distance(a, a, DistMode::Patristic, &lca);
+        assert_eq!(d, 0.0, "Self-distance must be exactly 0.0, got {}", d);
+    }
+
+    #[test]
     fn test_mode_conflict() {
         // Just test the logic: LMM should be distinct from topology
         let (nodes, root) = build_tree("((A:1,B:2):3,C:4);");

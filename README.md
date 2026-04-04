@@ -224,7 +224,8 @@ LeafC	5.000	2.500	7.000
 ## Troubleshooting and Tips
 
 * **Invalid Newick**: Ensure your Newick tree is syntactically correct (matching parentheses, semicolon at end). `distree` will error if parsing fails.
-* **Whitespace in Labels**: Leaf labels should not contain spaces, tabs, or newline characters, as these break the TSV format. Replace spaces with underscores if needed.
+* **Whitespace in Labels**: Leaf labels may contain spaces if they are enclosed in single or double quotes in the Newick file (e.g., `'Taxon A':1.0`). The parser handles quoted labels correctly. Tab characters (`\t`) in labels are rejected outright, as they would silently corrupt TSV output — replace them with underscores before running distree.
+* **NHX and BEAST annotations**: Bracket-enclosed metadata (`[&&NHX:...]`, `[&rate=...]`) is silently skipped. Branch lengths and labels are preserved.
 * **Choosing Distance Type**:
 
   * Use `--lmm` if performing phylogenetic comparative analyses (e.g., trait evolution, PGLS).
