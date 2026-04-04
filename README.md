@@ -10,10 +10,10 @@
 [![PGO](https://img.shields.io/badge/PathoGenOmics-lab-red?)](https://github.com/PathoGenOmics-Lab)
 [![DOI](https://img.shields.io/badge/doi-10.5281%2Fzenodo.16811766-%23ff0077)](https://doi.org/10.5281/zenodo.16811766)
 
-__Paula Ruiz-Rodriguez<sup>1</sup>__ 
+__Paula Ruiz-Rodriguez<sup>1</sup>__
 __and Mireia Coscolla<sup>1</sup>__
 <br>
-<sub> 1. I<sup>2</sup>SysBio, University of Valencia-CSIC, FISABIO Joint Research Unit Infection and Public Health, Valencia, Spain </sub>  
+<sub> 1. I<sup>2</sup>SysBio, University of Valencia-CSIC, FISABIO Joint Research Unit Infection and Public Health, Valencia, Spain </sub>
 
 `distree` is a command-line tool written in Rust that extracts a distance matrix from a phylogenetic tree in Newick format. It is designed to handle large trees with thousands of sequences by using a low-memory, parallelized approach.
 
@@ -36,12 +36,12 @@ __and Mireia Coscolla<sup>1</sup>__
 2. **Epidemiology & Public Health**
 
    * **Rapid Outbreak Tracking**: For pathogens such as bacteria or viruses, building a phylogenetic tree from whole-genome data can be computationally expensive to revisit. Extracting a distance matrix allows quick pairwise comparisons to identify clusters of closely related strains (e.g., potential transmission clusters) without recomputing distances from raw alignments.
-   * **Contact Tracing & Transmission Networks**: If you have a large outbreak dataset, computing patristic distances between samples quickly helps identify subclusters or “clades” of interest (e.g., to infer likely transmission chains). Similarly, topological distances might approximate epidemiological closeness if branch-length estimates vary widely.
+   * **Contact Tracing & Transmission Networks**: If you have a large outbreak dataset, computing patristic distances between samples quickly helps identify subclusters or "clades" of interest (e.g., to infer likely transmission chains). Similarly, topological distances might approximate epidemiological closeness if branch-length estimates vary widely.
 
 3. **Microbiome & Environmental Sequencing**
 
    * **OTU/ASV Clustering**: In 16S rRNA amplicon studies, one often constructs a phylogenetic tree of all amplicon sequence variants (ASVs). A distance matrix (patristic or topological) can feed into beta-diversity metrics (e.g., UniFrac requires branch lengths). Here, `distree` can quickly compute pairwise distances after the tree is built, facilitating ordination (PCoA) or clustering of samples by their phylogenetic composition.
-   * **Phylogenetic Diversity**: Calculating the sum of branch lengths between taxa supports metrics like Faith’s Phylogenetic Diversity or UniFrac. `distree` can produce the matrix needed for those algorithms without re-traversing the tree multiple times.
+   * **Phylogenetic Diversity**: Calculating the sum of branch lengths between taxa supports metrics like Faith's Phylogenetic Diversity or UniFrac. `distree` can produce the matrix needed for those algorithms without re-traversing the tree multiple times.
 
 4. **Machine Learning & Dimensionality Reduction**
 
@@ -86,47 +86,37 @@ mamba install -c bioconda distree
 Usage: distree [OPTIONS] <phylogeny>
 
 Arguments:
-  <phylogeny>            Path to the tree file in Newick format
+  <phylogeny>            Path to the tree file in Newick format (use '-' for stdin)
 
 Options:
-  --format <FORMAT>      Tree file format (only 'newick' is supported) [default: newick]
-  --midpoint             Midpoint-root the tree before computing distances
-  --lmm                  Produce the var-covar matrix C (depth of the MRCA)
-  --topology             Ignore branch lengths; use purely topological distances
-  -o, --output <FILE>     Path to write the TSV output file (defaults to stdout)
-  -h, --help             Print help information
-  -V, --version          Print version information
+      --midpoint             Midpoint-root the tree before computing distances
+      --lmm                  Produce the var-covar matrix C (depth of the MRCA)
+      --topology             Ignore branch lengths; use purely topological distances
+      --lower                Output only the lower triangle (PHYLIP-compatible)
+  -o, --output <FILE>        Path to write the TSV output file (defaults to stdout)
+  -p, --precision <N>        Number of decimal places for output [default: 10]
+  -t, --threads <N>          Number of parallel threads (default: all cores)
+  -h, --help                 Print help information
+  -V, --version              Print version information
 ```
 
 ### Argument & Option Details
 
-* `<phylogeny>`: Path to the input tree in Newick format. Leaf labels must be unique and not contain tabs or newline characters.
+* `<phylogeny>`: Path to the input tree in Newick format. Use `-` to read from stdin. Leaf labels must be unique.
 
-* `--format <FORMAT>`
+* `--midpoint`: Re-root at the midpoint of the longest path before computing distances.
 
-  * Currently only `newick` is supported. Future versions may support other formats (e.g., Nexus, PhyloXML).
-  * This option exists to maintain CLI consistency; it does not change parsing for now.
+* `--lmm`: Var-covar matrix for Phylogenetic Comparative Methods. Each entry (i, j) = depth of MRCA(i, j). Mutually exclusive with `--topology`.
 
-* `--midpoint`
+* `--topology`: Number of edges between leaves (integers). Ignores branch lengths.
 
-  * Before computing any distances, the tree will be re-rooted at its midpoint (the point halfway along the longest path between any two leaves). Useful when no outgroup is known or when you want a balanced root for downstream analyses.
-  * Use this if your downstream distance metric expects an unrooted, centrically-rooted tree.
+* `--lower`: Lower triangle only, no header or diagonal. Useful for PHYLIP-compatible input or to halve file size.
 
-* `--lmm`
+* `-p, --precision <N>`: Decimal places in output (default: 10). Applies to patristic and LMM modes.
 
-  * “LMM” stands for var-covar matrix (matrix C) in Phylogenetic Comparative Methods. Each entry (i, j) equals the depth (distance from root) of the lowest common ancestor of leaf i and leaf j. This matrix is often used in linear mixed models (LAMM, PGLS) to account for phylogenetic covariance.
-  * When specified, LMM distances override `--topology`. The output is a matrix of MRCA depths, not pairwise distances.
+* `-t, --threads <N>`: Thread count for parallel computation. Defaults to all available cores.
 
-* `--topology`
-
-  * Ignores branch lengths. Each entry (i, j) equals the number of edges between leaf i and leaf j:
-
-  * Use this mode if branch-lengths are not meaningful or if you only care about tree shape.
-
-* `-o, --output <FILE>`
-
-  * Write the TSV distance matrix to the specified path. If omitted, the matrix is printed to standard output.
-  * Example: `-o distances.tsv`.
+* `-o, --output <FILE>`: Write TSV to file instead of stdout.
 
 ## Output Format
 
@@ -173,7 +163,7 @@ LeafC	5.000	2.500	7.000
 ./distree tree.nwk -o patristic.tsv
 ```
 
-**Why**: Downstream tools like SciKit-Learn (for MDS) or R’s `ape::cmdscale()` expect a distance matrix. Patristic distances reflect evolutionary time or change.
+**Why**: Downstream tools like SciKit-Learn (for MDS) or R's `ape::cmdscale()` expect a distance matrix. Patristic distances reflect evolutionary time or change.
 
 ### 2. Computing Topological Distances Only
 
@@ -227,7 +217,7 @@ LeafC	5.000	2.500	7.000
 
 * **Memory**: `distree` streams one row at a time. At any given moment, only a single vector of length N (number of leaves) resides in memory, plus O(M log M) for LCA structures, where M is the total number of nodes. For trees with tens of thousands of taxa, memory usage remains low.
 
-* **Parallelism**: Each row’s distance computations are parallelized across available CPU cores via Rayon. For N taxa, computing N rows (each of size N) takes O(N^2 / #cores) time.
+* **Parallelism**: Each row's distance computations are parallelized across available CPU cores via Rayon. For N taxa, computing N rows (each of size N) takes O(N^2 / #cores) time.
 
 * **Disk I/O**: If writing to a file via `--output`, a buffered writer (`BufWriter`) minimizes I/O calls. Streaming directly to stdout also remains efficient.
 
@@ -272,7 +262,7 @@ distree is developed with ❤️ by:
       <a href="" title="Data">🔣</a>
       <a href="" title="Desing">🎨</a>
       <a href="" title="Tool">🔧</a>
-    </td> 
+    </td>
     <td align="center">
       <a href="https://github.com/mireiacoscolla">
         <img src="https://avatars.githubusercontent.com/u/29301737?v=4&s=100" width="100px;" alt=""/>
@@ -285,7 +275,7 @@ distree is developed with ❤️ by:
       <a href="" title="Mentoring">🧑‍🏫</a>
       <a href="" title="Research">🔬</a>
       <a href="" title="User Testing">📓</a>
-    </td> 
+    </td>
   </tr>
 </table>
 
