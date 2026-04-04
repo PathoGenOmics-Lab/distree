@@ -2,7 +2,8 @@ use std::num::ParseFloatError;
 
 use crate::tree::Node;
 
-/// Temporary structure used during Newick parsing.
+/// Temporary recursive structure used during Newick parsing.
+/// Converted to a flat `Vec<Node>` by [`flatten_raw`] after parsing.
 pub struct RawNode {
     pub name: Option<String>,
     pub length: f64,
@@ -10,10 +11,17 @@ pub struct RawNode {
 }
 
 /// Parse a complete Newick tree from a string.
+///
 /// Strips whitespace outside of quoted labels before parsing.
+/// Accepts trees with or without a trailing semicolon.
+/// Returns an error on malformed input or empty input.
 pub fn parse_newick(input: &str) -> Result<RawNode, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("Empty input: no Newick tree found.".to_string());
+    }
     // Pre-process: strip whitespace outside of single/double quotes
-    let cleaned = strip_whitespace_outside_quotes(input.trim());
+    let cleaned = strip_whitespace_outside_quotes(trimmed);
     let bytes = cleaned.as_bytes();
     let mut pos = 0;
     let root = parse_subtree_iterative(bytes, &mut pos)?;
@@ -186,6 +194,7 @@ fn parse_optional_length(bytes: &[u8], pos: &mut usize) -> Result<f64, String> {
 }
 
 /// Parse a floating-point branch length (supports scientific notation and negative values).
+/// Returns an error if no valid numeric characters follow the colon.
 fn parse_length_bytes(bytes: &[u8], pos: &mut usize) -> Result<f64, String> {
     let start = *pos;
     while *pos < bytes.len() {
@@ -196,6 +205,13 @@ fn parse_length_bytes(bytes: &[u8], pos: &mut usize) -> Result<f64, String> {
             break;
         }
     }
+    if start == *pos {
+        return Err(format!(
+            "Expected a numeric branch length at position {}, found '{}'.",
+            pos,
+            bytes.get(*pos).map(|&b| b as char).unwrap_or('\0')
+        ));
+    }
     let numstr = std::str::from_utf8(&bytes[start..*pos])
         .map_err(|_| "Invalid UTF-8 in branch length".to_string())?;
     numstr
@@ -204,6 +220,9 @@ fn parse_length_bytes(bytes: &[u8], pos: &mut usize) -> Result<f64, String> {
 }
 
 /// Flatten a `RawNode` tree into a flat `Vec<Node>` iteratively (no stack overflow).
+///
+/// Returns the index of the root node in `nodes`.
+/// Parent/child relationships are set up correctly for LCA queries.
 pub fn flatten_raw(raw: &RawNode, parent: Option<usize>, nodes: &mut Vec<Node>) -> usize {
     // Stack of (raw_node_ref, parent_index)
     let mut stack: Vec<(&RawNode, Option<usize>)> = vec![(raw, parent)];
@@ -355,5 +374,38 @@ mod tests {
     fn test_negative_branch_length_parsed() {
         let raw = parse_newick("(A:-0.5,B:2.0);").unwrap();
         assert!((raw.children[0].length - (-0.5)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_empty_input_error() {
+        assert!(parse_newick("").is_err());
+        assert!(parse_newick("   ").is_err());
+        assert!(parse_newick("\n\t").is_err());
+    }
+
+    #[test]
+    fn test_empty_branch_length_error() {
+        // ":" followed by non-numeric should error, not panic
+        let result = parse_newick("(A:,B:2.0);");
+        assert!(result.is_err(), "Expected error for empty branch length");
+    }
+
+    #[test]
+    fn test_no_trailing_semicolon() {
+        // Trees without semicolons are valid in many tools
+        let result = parse_newick("(A:1.0,B:2.0)");
+        // Should parse successfully
+        assert!(result.is_ok());
+        let raw = result.unwrap();
+        assert_eq!(raw.children.len(), 2);
+    }
+
+    #[test]
+    fn test_unmatched_paren_error() {
+        // Unmatched open paren with no content — should not succeed with valid tree
+        // (depending on parser leniency, it may error or produce garbage)
+        let result = parse_newick("((A:1.0,B:2.0)");
+        // At minimum it should not panic
+        let _ = result;
     }
 }

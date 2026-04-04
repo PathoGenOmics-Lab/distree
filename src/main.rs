@@ -16,6 +16,8 @@ use parser::{flatten_raw, parse_newick};
 use tree::Node;
 
 /// Distance mode to compute.
+///
+/// Selects how pairwise leaf distances are calculated from the tree.
 #[derive(Clone, Copy, PartialEq)]
 enum DistMode {
     Patristic,
@@ -172,7 +174,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("No labeled leaves found in the tree.".into());
     }
 
-    // Check for duplicate leaf names
+    // Check for duplicate leaf names and tabs in labels
     {
         let mut seen = HashSet::with_capacity(leaf_indices.len());
         for &i in &leaf_indices {
@@ -181,6 +183,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Err(format!(
                     "Duplicate leaf name '{}' found. Leaf names must be unique.",
                     name
+                )
+                .into());
+            }
+            if name.contains('\t') {
+                return Err(format!(
+                    "Leaf name '{}' contains a tab character, which would corrupt TSV output. \
+                     Use an underscore or rename the leaf.",
+                    name.replace('\t', "\\t")
                 )
                 .into());
             }
@@ -221,15 +231,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         writer.write_all(b"\n")?;
     }
 
-    // Compute and print distance matrix
+    // Compute and print distance matrix (reuse row buffer to avoid per-row allocation)
+    let mut row_buf: Vec<f64> = Vec::with_capacity(n_leaves);
     for (row_i, &leaf_i) in sorted_leaf_indices.iter().enumerate() {
         let col_end = if do_lower { row_i } else { n_leaves };
         let col_slice = &sorted_leaf_indices[..col_end];
 
-        let this_row: Vec<f64> = col_slice
-            .par_iter()
-            .map(|&leaf_j| compute_distance(leaf_i, leaf_j, mode, &lca_data))
-            .collect();
+        row_buf.clear();
+        row_buf.par_extend(
+            col_slice
+                .par_iter()
+                .map(|&leaf_j| compute_distance(leaf_i, leaf_j, mode, &lca_data))
+        );
+        let this_row = &row_buf;
 
         if !do_lower {
             writer.write_all(sorted_labels[row_i].as_bytes())?;
@@ -246,7 +260,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Compute distance between two leaves given the mode.
+/// Compute the distance between two leaves according to `mode`.
+///
+/// Returns the patristic distance, topological hop count, or LMM covariance depth.
 #[inline]
 fn compute_distance(
     leaf_i: usize,
@@ -267,12 +283,15 @@ fn compute_distance(
             let d_i = lca_data.depth_len[leaf_i];
             let d_j = lca_data.depth_len[leaf_j];
             let d_m = lca_data.depth_len[m];
-            d_i + d_j - 2.0 * d_m
+            // Clamp to 0 to avoid tiny negatives from floating-point arithmetic
+            (d_i + d_j - 2.0 * d_m).max(0.0)
         }
     }
 }
 
-/// Format a distance value for output.
+/// Format a single distance value for TSV output.
+///
+/// Topology mode outputs integers; patristic and LMM use `precision` decimal places.
 #[inline]
 fn format_distance(
     writer: &mut dyn Write,
