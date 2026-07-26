@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.1", features = ["derive"] }
+flate2 = "1.1.9"
 rayon = "1.5"
 
 [dev-dependencies]
+flate2 = "1.1.9"
 tempfile = "3"

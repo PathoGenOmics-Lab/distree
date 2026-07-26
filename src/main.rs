@@ -1,9 +1,11 @@
 use clap::{Arg, ArgAction, Command};
+use flate2::read::GzDecoder;
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
 use std::process::ExitCode;
+use std::time::Instant;
 
 use distree::lca::build_lca_structure;
 use distree::midpoint::midpoint_root;
@@ -44,6 +46,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let started = Instant::now();
     let matches = Command::new("distree")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Paula Ruiz-Rodriguez")
@@ -98,6 +101,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Arg::new("lower")
                 .long("lower")
                 .help("Output PHYLIP lower-triangle format (taxa count header, row labels, no diagonal)")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("taxa")
+                .long("taxa")
+                .help("Restrict the matrix to the leaf labels listed in FILE, one per line")
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::new("stats")
+                .long("stats")
+                .help("Print a summary of the run to stderr")
                 .action(ArgAction::SetTrue),
         )
         .get_matches();
@@ -158,17 +173,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .read_to_end(&mut raw_input)?;
     }
 
-    // Large trees are usually shipped compressed, and a gzip file reaching the
-    // UTF-8 check produced "stream did not contain valid UTF-8", which says
-    // nothing about what to do next.
+    // Large trees are usually shipped compressed, so read gzip directly rather
+    // than making the caller pipe it through gunzip. Detected by magic bytes
+    // rather than by extension, so it works from stdin too.
     if raw_input.starts_with(&[0x1f, 0x8b]) {
-        return Err(format!(
-            "{} is gzip-compressed. distree reads plain text; decompress it on the way in:\n\
-             \x20   gunzip -c {} | distree -",
-            source,
-            if tree_path == "-" { "FILE.nwk.gz" } else { tree_path.as_str() }
-        )
-        .into());
+        let mut decoded = Vec::new();
+        GzDecoder::new(&raw_input[..])
+            .read_to_end(&mut decoded)
+            .map_err(|e| format!("{} is gzip-compressed but could not be read: {}", source, e))?;
+        raw_input = decoded;
     }
 
     let newick_str = String::from_utf8(raw_input).map_err(|_| {
@@ -309,6 +322,42 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .map(|&i| (nodes[i].name.clone().expect("leaf has name"), i))
         .collect();
+
+    // Restrict to the requested subset, if any. The distances themselves are
+    // unaffected: the path between two leaves does not depend on which other
+    // leaves are in the matrix, so this filters the output rather than pruning
+    // the tree.
+    if let Some(path) = matches.get_one::<String>("taxa") {
+        let wanted = read_taxa_list(path)?;
+        let present: HashSet<&str> = leaf_label_pairs.iter().map(|(l, _)| l.as_str()).collect();
+
+        let missing: Vec<&str> = wanted
+            .iter()
+            .filter(|w| !present.contains(w.as_str()))
+            .map(String::as_str)
+            .collect();
+        if !missing.is_empty() {
+            // Silently dropping these would give a matrix smaller than asked
+            // for, which is the kind of thing nobody notices until much later.
+            let shown = missing.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+            return Err(format!(
+                "{} of the {} labels in '{}' are not leaves of the tree: {}{}",
+                missing.len(),
+                wanted.len(),
+                path,
+                shown,
+                if missing.len() > 5 { ", ..." } else { "" }
+            )
+            .into());
+        }
+
+        let keep: HashSet<&str> = wanted.iter().map(String::as_str).collect();
+        leaf_label_pairs.retain(|(label, _)| keep.contains(label.as_str()));
+        if leaf_label_pairs.is_empty() {
+            return Err(format!("'{}' selected no leaves.", path).into());
+        }
+    }
+
     leaf_label_pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
     let sorted_labels: Vec<&str> = leaf_label_pairs
@@ -378,31 +427,76 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // leaving it in the serial write loop capped the whole run: at six decimals
     // it was about two thirds of the work no number of cores could touch.
     let batch_rows = (BATCH_CELLS / n_leaves).clamp(1, n_leaves);
-    let mut batch: Vec<Vec<u8>> = vec![Vec::new(); batch_rows];
+    let mut batch: Vec<(Vec<u8>, Stats)> = vec![(Vec::new(), Stats::default()); batch_rows];
     let row_width = |row_i: usize| if do_lower { row_i } else { n_leaves };
+    let mut totals = Stats::default();
 
     let mut first_row = 0;
     while first_row < n_leaves {
         let rows = (n_leaves - first_row).min(batch_rows);
 
-        batch[..rows].par_iter_mut().enumerate().for_each(|(k, out)| {
-            let row_i = first_row + k;
-            let leaf_i = sorted_leaf_indices[row_i];
-            out.clear();
-            out.extend_from_slice(sorted_labels[row_i].as_bytes());
-            for &leaf_j in &sorted_leaf_indices[..row_width(row_i)] {
-                let dist = compute_distance(leaf_i, leaf_j, mode, &lca_data);
-                out.push(b'\t');
-                format_distance(out, dist, mode, precision);
-            }
-            out.push(b'\n');
-        });
+        batch[..rows]
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(k, (out, stats))| {
+                let row_i = first_row + k;
+                let leaf_i = sorted_leaf_indices[row_i];
+                out.clear();
+                out.extend_from_slice(sorted_labels[row_i].as_bytes());
+                *stats = Stats::default();
+                for (col, &leaf_j) in sorted_leaf_indices[..row_width(row_i)].iter().enumerate() {
+                    let dist = compute_distance(leaf_i, leaf_j, mode, &lca_data);
+                    out.push(b'\t');
+                    format_distance(out, dist, mode, precision);
+                    // The diagonal is zero by construction in the distance
+                    // modes and the leaf's own depth under --lmm, so it would
+                    // only drag the summary around.
+                    if col != row_i {
+                        stats.add(dist);
+                    }
+                }
+                out.push(b'\n');
+            });
 
-        for row in &batch[..rows] {
+        for (row, stats) in &batch[..rows] {
             writer.write_all(row)?;
+            totals.merge(stats);
         }
 
         first_row += rows;
+    }
+
+    if *matches.get_one::<bool>("stats").unwrap_or(&false) {
+        let unit = match mode {
+            DistMode::Patristic => "patristic distance",
+            DistMode::Topology => "edge count",
+            DistMode::Lmm => "root-to-MRCA depth",
+        };
+        eprintln!("--- Statistics ---");
+        eprintln!("Leaves in matrix:  {}", n_leaves);
+        if n_leaves != leaf_indices.len() {
+            eprintln!("Leaves in tree:    {}", leaf_indices.len());
+        }
+        eprintln!("Nodes in tree:     {}", nodes.len());
+        eprintln!("Mode:              {}", unit);
+        if do_midpoint && mode != DistMode::Topology {
+            eprintln!("Rooting:           midpoint");
+        }
+        eprintln!("Cells written:     {}", totals.count + n_leaves as u64 * u64::from(!do_lower));
+        if totals.count > 0 {
+            // Off the diagonal, which is zero by construction in the distance
+            // modes and would only pull the summary towards it.
+            if mode == DistMode::Topology {
+                eprintln!("Minimum:           {}", totals.min as i64);
+                eprintln!("Maximum:           {}", totals.max as i64);
+                eprintln!("Mean:              {:.3}", totals.mean());
+            } else {
+                eprintln!("Minimum:           {:.*}", precision, totals.min);
+                eprintln!("Maximum:           {:.*}", precision, totals.max);
+                eprintln!("Mean:              {:.*}", precision, totals.mean());
+            }
+        }
+        eprintln!("Time:              {:.3}s", started.elapsed().as_secs_f64());
     }
 
     // BufWriter flushes on drop but discards whatever error it hits, so a full
@@ -418,6 +512,86 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// Running summary of the off-diagonal cells, for `--stats`.
+///
+/// Accumulated per row by the worker that computed it, then merged in the
+/// writing loop, so the numbers cost one pass and no second traversal.
+#[derive(Clone, Copy)]
+struct Stats {
+    min: f64,
+    max: f64,
+    sum: f64,
+    count: u64,
+}
+
+impl Default for Stats {
+    fn default() -> Self {
+        Stats { min: f64::INFINITY, max: f64::NEG_INFINITY, sum: 0.0, count: 0 }
+    }
+}
+
+impl Stats {
+    #[inline]
+    fn add(&mut self, value: f64) {
+        if value < self.min {
+            self.min = value;
+        }
+        if value > self.max {
+            self.max = value;
+        }
+        self.sum += value;
+        self.count += 1;
+    }
+
+    fn merge(&mut self, other: &Stats) {
+        if other.count == 0 {
+            return;
+        }
+        if other.min < self.min {
+            self.min = other.min;
+        }
+        if other.max > self.max {
+            self.max = other.max;
+        }
+        self.sum += other.sum;
+        self.count += other.count;
+    }
+
+    fn mean(&self) -> f64 {
+        if self.count == 0 {
+            f64::NAN
+        } else {
+            self.sum / self.count as f64
+        }
+    }
+}
+
+/// Read the leaf labels for `--taxa`: one per line, blanks and `#` comments
+/// skipped, duplicates collapsed.
+fn read_taxa_list(path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("Cannot read the taxa list '{}': {}", path, e))?;
+
+    let mut seen = HashSet::new();
+    let mut wanted = Vec::new();
+    for line in text.lines() {
+        // Trailing \r survives a file written on Windows and would stop every
+        // label matching.
+        let label = line.trim_end_matches(['\r', '\n']).trim();
+        if label.is_empty() || label.starts_with('#') {
+            continue;
+        }
+        if seen.insert(label.to_string()) {
+            wanted.push(label.to_string());
+        }
+    }
+
+    if wanted.is_empty() {
+        return Err(format!("The taxa list '{}' is empty.", path).into());
+    }
+    Ok(wanted)
 }
 
 /// Append a single distance value to a row buffer.

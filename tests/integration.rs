@@ -199,17 +199,115 @@ fn test_binary_warns_lower_drops_lmm_diagonal() {
     assert!(!stderr.contains("diagonal"), "stderr: {}", stderr);
 }
 
+fn gzip(bytes: &[u8]) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(bytes).unwrap();
+    enc.finish().unwrap()
+}
+
 #[test]
-fn test_binary_names_gzip_input() {
+fn test_binary_reads_gzip_input() {
+    let dir = tempfile::tempdir().unwrap();
+    let plain = dir.path().join("t.nwk");
+    let packed = dir.path().join("t.nwk.gz");
+    let newick = "((A:1.0,B:2.0):0.5,C:3.0);";
+    std::fs::write(&plain, newick).unwrap();
+    std::fs::write(&packed, gzip(newick.as_bytes())).unwrap();
+
+    let (code, from_plain, _) = run(&[plain.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+    let (code, from_gz, _) = run(&[packed.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+    assert_eq!(from_plain, from_gz, "gzip input must give the same matrix");
+}
+
+#[test]
+fn test_binary_reads_gzip_from_stdin() {
+    // Detection is by magic bytes, so it works with no filename to go on
+    let packed = gzip(b"(A:1.0,B:3.0);");
+    let mut cmd = Command::new(bin());
+    cmd.arg("-").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(&packed).unwrap();
+    let out = child.wait_with_output().unwrap();
+
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.lines().count(), 3, "header + 2 rows: {}", stdout);
+}
+
+#[test]
+fn test_binary_reports_corrupt_gzip() {
     let dir = tempfile::tempdir().unwrap();
     let tree = dir.path().join("t.nwk.gz");
-    // Gzip magic bytes are enough; the file never gets decompressed
     std::fs::write(&tree, [0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00]).unwrap();
 
     let (code, _stdout, stderr) = run(&[tree.to_str().unwrap()], None);
     assert_ne!(code, 0);
     assert!(stderr.contains("gzip"), "stderr should name gzip: {}", stderr);
-    assert!(stderr.contains("gunzip -c"), "and say what to do: {}", stderr);
+}
+
+#[test]
+fn test_binary_taxa_subset() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "((A:1.0,B:2.0):0.5,(C:3.0,D:4.0):0.5);").unwrap();
+    let taxa = dir.path().join("keep.txt");
+    // Out of order, with a blank line, a comment and a duplicate
+    std::fs::write(&taxa, "D\n\n# keep these\nA\nA\n").unwrap();
+
+    let (code, subset, _) = run(&["--taxa", taxa.to_str().unwrap(), tree.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+    let lines: Vec<&str> = subset.lines().collect();
+    assert_eq!(lines.len(), 3, "header + 2 rows: {:?}", lines);
+    assert_eq!(lines[0], "\tA\tD");
+
+    // The distance must be the one from the full tree: a subset filters the
+    // output, it does not prune the tree
+    let (_, full, _) = run(&[tree.to_str().unwrap()], None);
+    let full_ad = full
+        .lines()
+        .find(|l| l.starts_with("A\t"))
+        .unwrap()
+        .split('\t')
+        .nth(4)
+        .unwrap()
+        .to_string();
+    let subset_ad = lines[1].split('\t').nth(2).unwrap();
+    assert_eq!(subset_ad, full_ad, "A-D differs between subset and full matrix");
+}
+
+#[test]
+fn test_binary_taxa_rejects_unknown_labels() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "(A:1.0,B:2.0);").unwrap();
+    let taxa = dir.path().join("keep.txt");
+    std::fs::write(&taxa, "A\nNOT_IN_TREE\n").unwrap();
+
+    let (code, _stdout, stderr) = run(&["--taxa", taxa.to_str().unwrap(), tree.to_str().unwrap()], None);
+    assert_ne!(code, 0, "an unknown label should be an error, not a smaller matrix");
+    assert!(stderr.contains("NOT_IN_TREE"), "stderr should name it: {}", stderr);
+}
+
+#[test]
+fn test_binary_stats_goes_to_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "((A:1.0,B:2.0):0.5,C:3.0);").unwrap();
+
+    let (code, with_stats, stderr) = run(&["--stats", "-p", "3", tree.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+    let (_, without, _) = run(&["-p", "3", tree.to_str().unwrap()], None);
+
+    assert_eq!(with_stats, without, "--stats must not touch the matrix");
+    assert!(stderr.contains("Leaves in matrix:  3"), "stderr: {}", stderr);
+    assert!(stderr.contains("Nodes in tree:     5"), "stderr: {}", stderr);
+    // Off-diagonal distances here are 3.0, 4.5 and 5.5
+    assert!(stderr.contains("Minimum:           3.000"), "stderr: {}", stderr);
+    assert!(stderr.contains("Maximum:           5.500"), "stderr: {}", stderr);
 }
 
 #[test]
