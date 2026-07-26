@@ -115,6 +115,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .help("Print a summary of the run to stderr")
                 .action(ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("npy")
+                .long("npy")
+                .help("Write a NumPy .npy array instead of text (requires -o; labels go to <FILE>.labels.txt)")
+                .action(ArgAction::SetTrue),
+        )
         .get_matches();
 
     let tree_path = matches
@@ -127,6 +133,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let do_lower = *matches.get_one::<bool>("lower").unwrap_or(&false);
     let output_path = matches.get_one::<String>("output");
     let precision = *matches.get_one::<usize>("precision").unwrap_or(&10);
+
+    let do_npy = *matches.get_one::<bool>("npy").unwrap_or(&false);
+
+    if do_npy && output_path.is_none() {
+        return Err(
+            "--npy writes binary, so it needs a file: add -o FILE. The labels go to \
+             FILE.labels.txt beside it."
+                .into(),
+        );
+    }
+    if do_npy && do_topology && !do_lmm {
+        // Edge counts are integers; an f64 array of them is honest but odd, so
+        // say what is happening rather than let it surprise anyone.
+        eprintln!("Warning: --npy writes 64-bit floats, so --topology edge counts are stored as floats.");
+    }
 
     if precision > MAX_PRECISION {
         return Err(format!(
@@ -399,7 +420,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Print header
-    if do_lower {
+    if do_npy {
+        // NumPy needs the shape up front, which is known, so the array still
+        // streams out a row at a time behind this.
+        let shape = if do_lower {
+            // The condensed form scipy.spatial.distance.squareform expects
+            format!("({},)", n_leaves * (n_leaves - 1) / 2)
+        } else {
+            format!("({}, {})", n_leaves, n_leaves)
+        };
+        writer.write_all(&npy_header(&shape))?;
+
+        // .npy has nowhere to put the labels, so they go beside it in the
+        // order of the rows.
+        let labels_path = format!("{}.labels.txt", output_path.expect("--npy requires -o"));
+        let mut labels = String::with_capacity(n_leaves * 12);
+        for lab in &sorted_labels {
+            labels.push_str(lab);
+            labels.push('\n');
+        }
+        std::fs::write(&labels_path, labels)
+            .map_err(|e| format!("Cannot write the labels to '{}': {}", labels_path, e))?;
+    } else if do_lower {
         // PHYLIP format: first line is the number of taxa
         writeln!(writer, "{}", n_leaves)?;
     } else {
@@ -428,7 +470,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // it was about two thirds of the work no number of cores could touch.
     let batch_rows = (BATCH_CELLS / n_leaves).clamp(1, n_leaves);
     let mut batch: Vec<(Vec<u8>, Stats)> = vec![(Vec::new(), Stats::default()); batch_rows];
-    let row_width = |row_i: usize| if do_lower { row_i } else { n_leaves };
+
+    // Which columns a row carries. The two triangular forms are not the same
+    // triangle: PHYLIP wants row i to hold columns 0..i, while the condensed
+    // vector SciPy reads wants columns i+1..n, which concatenated over the rows
+    // is its (0,1), (0,2), ... (1,2), ... ordering. Emitting the PHYLIP order
+    // into a .npy would hand squareform the right values in the wrong places.
+    let row_range = |row_i: usize| -> std::ops::Range<usize> {
+        match (do_lower, do_npy) {
+            (false, _) => 0..n_leaves,
+            (true, false) => 0..row_i,
+            (true, true) => (row_i + 1).min(n_leaves)..n_leaves,
+        }
+    };
     let mut totals = Stats::default();
 
     let mut first_row = 0;
@@ -442,12 +496,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let row_i = first_row + k;
                 let leaf_i = sorted_leaf_indices[row_i];
                 out.clear();
-                out.extend_from_slice(sorted_labels[row_i].as_bytes());
+                if !do_npy {
+                    out.extend_from_slice(sorted_labels[row_i].as_bytes());
+                }
                 *stats = Stats::default();
-                for (col, &leaf_j) in sorted_leaf_indices[..row_width(row_i)].iter().enumerate() {
+                let cols = row_range(row_i);
+                let first_col = cols.start;
+                for (offset, &leaf_j) in sorted_leaf_indices[cols].iter().enumerate() {
+                    let col = first_col + offset;
                     let dist = compute_distance(leaf_i, leaf_j, mode, &lca_data);
-                    out.push(b'\t');
-                    format_distance(out, dist, mode, precision);
+                    if do_npy {
+                        out.extend_from_slice(&dist.to_le_bytes());
+                    } else {
+                        out.push(b'\t');
+                        format_distance(out, dist, mode, precision);
+                    }
                     // The diagonal is zero by construction in the distance
                     // modes and the leaf's own depth under --lmm, so it would
                     // only drag the summary around.
@@ -455,7 +518,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         stats.add(dist);
                     }
                 }
-                out.push(b'\n');
+                if !do_npy {
+                    out.push(b'\n');
+                }
             });
 
         for (row, stats) in &batch[..rows] {
@@ -512,6 +577,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// Build the header of a NumPy `.npy` file (format 1.0) for a little-endian
+/// f64 array of the given shape.
+///
+/// Magic, version, then a two-byte header length and an ASCII dict, the whole
+/// thing padded to a multiple of 64 bytes so the array data lands aligned.
+fn npy_header(shape: &str) -> Vec<u8> {
+    let dict = format!(
+        "{{'descr': '<f8', 'fortran_order': False, 'shape': {}, }}",
+        shape
+    );
+
+    const PREAMBLE: usize = 6 + 2 + 2; // magic + version + header length
+    let unpadded = PREAMBLE + dict.len() + 1; // + the closing newline
+    let padding = (64 - unpadded % 64) % 64;
+    let header_len = dict.len() + padding + 1;
+
+    let mut out = Vec::with_capacity(PREAMBLE + header_len);
+    out.extend_from_slice(b"\x93NUMPY");
+    out.extend_from_slice(&[0x01, 0x00]);
+    out.extend_from_slice(&(header_len as u16).to_le_bytes());
+    out.extend_from_slice(dict.as_bytes());
+    out.extend(std::iter::repeat_n(b' ', padding));
+    out.push(b'\n');
+    out
 }
 
 /// Running summary of the off-diagonal cells, for `--stats`.

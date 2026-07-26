@@ -292,6 +292,92 @@ fn test_binary_taxa_rejects_unknown_labels() {
     assert!(stderr.contains("NOT_IN_TREE"), "stderr should name it: {}", stderr);
 }
 
+/// Minimal .npy reader: check the header and return the f64 payload.
+fn read_npy(path: &std::path::Path) -> (String, Vec<f64>) {
+    let bytes = std::fs::read(path).expect("npy file");
+    assert_eq!(&bytes[..6], b"\x93NUMPY", "npy magic");
+    assert_eq!(&bytes[6..8], &[1, 0], "npy version 1.0");
+    let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+    let header = String::from_utf8(bytes[10..10 + header_len].to_vec()).unwrap();
+    assert!(header.contains("'descr': '<f8'"), "header: {}", header);
+    assert!(header.contains("'fortran_order': False"), "header: {}", header);
+    assert_eq!(
+        (10 + header_len) % 64,
+        0,
+        "the array data must start 64-byte aligned"
+    );
+
+    let data = &bytes[10 + header_len..];
+    assert_eq!(data.len() % 8, 0, "payload is whole f64s");
+    let values = data
+        .chunks_exact(8)
+        .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
+        .collect();
+    (header, values)
+}
+
+#[test]
+fn test_binary_npy_square() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "((A:1.0,B:2.0):0.5,C:3.0);").unwrap();
+    let out = dir.path().join("d.npy");
+
+    let (code, _stdout, _) = run(&["--npy", "-o", out.to_str().unwrap(), tree.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+
+    let (header, values) = read_npy(&out);
+    assert!(header.contains("'shape': (3, 3)"), "header: {}", header);
+    assert_eq!(values.len(), 9);
+    // Row-major: [A-A, A-B, A-C, B-A, ...]
+    assert_eq!(values[0], 0.0);
+    assert!((values[1] - 3.0).abs() < 1e-12, "A-B should be 3.0");
+    assert!((values[2] - 4.5).abs() < 1e-12, "A-C should be 4.5");
+    assert_eq!(values[1], values[3], "the matrix must be symmetric");
+
+    let labels = std::fs::read_to_string(out.with_extension("npy.labels.txt")).unwrap();
+    assert_eq!(labels, "A\nB\nC\n");
+}
+
+#[test]
+fn test_binary_npy_lower_is_scipy_condensed() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "((A:1.0,B:2.0):0.5,(C:3.0,D:4.0):0.5);").unwrap();
+    let square = dir.path().join("sq.npy");
+    let cond = dir.path().join("cond.npy");
+
+    run(&["--npy", "-o", square.to_str().unwrap(), tree.to_str().unwrap()], None);
+    run(&["--npy", "--lower", "-o", cond.to_str().unwrap(), tree.to_str().unwrap()], None);
+
+    let (header, condensed) = read_npy(&cond);
+    assert!(header.contains("'shape': (6,)"), "header: {}", header);
+    let (_, full) = read_npy(&square);
+
+    // SciPy's condensed ordering is the upper triangle read row by row:
+    // (0,1), (0,2), (0,3), (1,2), (1,3), (2,3). Emitting PHYLIP's lower
+    // triangle instead would give the right values in the wrong places.
+    let n = 4;
+    let mut expected = Vec::new();
+    for i in 0..n {
+        for j in i + 1..n {
+            expected.push(full[i * n + j]);
+        }
+    }
+    assert_eq!(condensed, expected, "condensed order must match squareform");
+}
+
+#[test]
+fn test_binary_npy_needs_an_output_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "(A:1.0,B:2.0);").unwrap();
+
+    let (code, _stdout, stderr) = run(&["--npy", tree.to_str().unwrap()], None);
+    assert_ne!(code, 0, "binary to a terminal should be refused");
+    assert!(stderr.contains("-o"), "stderr should say what to do: {}", stderr);
+}
+
 #[test]
 fn test_binary_stats_goes_to_stderr() {
     let dir = tempfile::tempdir().unwrap();
