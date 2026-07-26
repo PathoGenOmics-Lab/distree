@@ -125,12 +125,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|e| format!("Failed to initialize thread pool: {}", e))?;
     }
 
-    let mut writer: Box<dyn Write> = if let Some(path) = output_path {
-        Box::new(BufWriter::new(File::create(path)?))
-    } else {
-        Box::new(BufWriter::new(io::stdout()))
-    };
-
     // Read input from file or stdin
     let mut newick_str = String::new();
     if tree_path == "-" {
@@ -218,6 +212,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "Warning: no branch lengths detected, all patristic distances will be zero. Consider --topology."
         );
     }
+
+    // Open the output only once the tree is known to be usable: creating it
+    // earlier truncated the previous results before a parse error could be
+    // reported, leaving the user with an empty file and nothing to fall back on.
+    let mut writer: Box<dyn Write> = if let Some(path) = output_path {
+        Box::new(BufWriter::new(File::create(path).map_err(|e| {
+            format!("Cannot write to '{}': {}", path, e)
+        })?))
+    } else {
+        Box::new(BufWriter::new(io::stdout()))
+    };
 
     // Print header
     if do_lower {

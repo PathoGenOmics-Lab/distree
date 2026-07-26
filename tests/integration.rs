@@ -128,6 +128,26 @@ fn test_binary_empty_input_error() {
 }
 
 #[test]
+fn test_binary_keeps_output_file_on_parse_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("bad.nwk");
+    std::fs::write(&tree, "('unclosed:1.0,B:2.0);").unwrap();
+    let out = dir.path().join("results.tsv");
+    std::fs::write(&out, "previous results\n").unwrap();
+
+    let (code, _stdout, _stderr) = run(
+        &[tree.to_str().unwrap(), "-o", out.to_str().unwrap()],
+        None,
+    );
+    assert_ne!(code, 0, "should exit with error on unclosed quote");
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        "previous results\n",
+        "a failed run must not clobber an existing output file"
+    );
+}
+
+#[test]
 fn test_binary_precision_flag() {
     let dir = tempfile::tempdir().unwrap();
     let tree = dir.path().join("t.nwk");
