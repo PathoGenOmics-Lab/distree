@@ -25,6 +25,33 @@ pub fn parse_newick(input: &str) -> Result<RawNode, String> {
     let bytes = cleaned.as_bytes();
     let mut pos = 0;
     let root = parse_subtree_iterative(bytes, &mut pos)?;
+
+    // Only an optional ';' and trailing comments may follow the tree. Anything
+    // else means the input is not a single well-formed tree, and silently
+    // ignoring it would hand back a matrix for something the user never asked
+    // for.
+    skip_ignorable_bytes(bytes, &mut pos)?;
+    let mut ended_with_semicolon = false;
+    if pos < bytes.len() && bytes[pos] == b';' {
+        pos += 1;
+        ended_with_semicolon = true;
+    }
+    skip_ignorable_bytes(bytes, &mut pos)?;
+    if pos < bytes.len() {
+        if ended_with_semicolon && bytes[pos] == b'(' {
+            return Err(format!(
+                "Unexpected content at position {}: the file appears to hold more than one tree. \
+                 distree processes a single Newick tree; split the file first.",
+                pos
+            ));
+        }
+        return Err(format!(
+            "Unexpected content after the end of the tree at position {}: '{}'.",
+            pos,
+            bytes[pos] as char
+        ));
+    }
+
     Ok(root)
 }
 
@@ -68,7 +95,7 @@ fn parse_subtree_iterative(bytes: &[u8], pos: &mut usize) -> Result<RawNode, Str
     loop {
         // A subtree may be preceded by comments: the rooting marker some
         // programs emit ("[&R] (A,B);") or per-branch metadata ("(A,[&x=1]B)").
-        skip_ignorable_bytes(bytes, pos);
+        skip_ignorable_bytes(bytes, pos)?;
 
         // Decide what to parse at current position
         let current_node = if *pos < bytes.len() && bytes[*pos] == b'(' {
@@ -82,9 +109,9 @@ fn parse_subtree_iterative(bytes: &[u8], pos: &mut usize) -> Result<RawNode, Str
         } else {
             // Leaf node
             let name = parse_label_bytes(bytes, pos)?;
-            skip_comments_bytes(bytes, pos);
+            skip_comments_bytes(bytes, pos)?;
             let length = parse_optional_length(bytes, pos)?;
-            skip_comments_bytes(bytes, pos);
+            skip_comments_bytes(bytes, pos)?;
             let mut leaf = RawNode { name: None, length, children: Vec::new() };
             if !name.is_empty() {
                 leaf.name = Some(name);
@@ -105,11 +132,11 @@ fn parse_subtree_iterative(bytes: &[u8], pos: &mut usize) -> Result<RawNode, Str
                 } else if *pos < bytes.len() && bytes[*pos] == b')' {
                     *pos += 1;
                     // Internal node complete — read its label and length
-                    skip_comments_bytes(bytes, pos);
+                    skip_comments_bytes(bytes, pos)?;
                     let name = parse_label_bytes(bytes, pos)?;
-                    skip_comments_bytes(bytes, pos);
+                    skip_comments_bytes(bytes, pos)?;
                     let length = parse_optional_length(bytes, pos)?;
-                    skip_comments_bytes(bytes, pos);
+                    skip_comments_bytes(bytes, pos)?;
 
                     let mut frame = stack.pop().unwrap();
                     if !name.is_empty() {
@@ -119,9 +146,13 @@ fn parse_subtree_iterative(bytes: &[u8], pos: &mut usize) -> Result<RawNode, Str
                     completed = frame.node;
                     // continue inner loop to feed this up further
                 } else if *pos >= bytes.len() {
-                    // End of input while inside parentheses
-                    let frame = stack.pop().unwrap();
-                    completed = frame.node;
+                    // End of input while still inside parentheses: the tree is
+                    // truncated. Closing it silently would emit a matrix whose
+                    // branch lengths are quietly wrong.
+                    return Err(format!(
+                        "Unexpected end of input: {} unclosed '(' remain. The tree is truncated.",
+                        stack.len()
+                    ));
                 } else {
                     let ch = bytes[*pos] as char;
                     return Err(format!("Expected ',' or ')', found '{}' at position {}", ch, *pos));
@@ -141,13 +172,13 @@ fn skip_whitespace_bytes(bytes: &[u8], pos: &mut usize) {
 }
 
 /// Skip any run of whitespace and '[...]' comments.
-fn skip_ignorable_bytes(bytes: &[u8], pos: &mut usize) {
+fn skip_ignorable_bytes(bytes: &[u8], pos: &mut usize) -> Result<(), String> {
     loop {
         let before = *pos;
         skip_whitespace_bytes(bytes, pos);
-        skip_comments_bytes(bytes, pos);
+        skip_comments_bytes(bytes, pos)?;
         if *pos == before {
-            return;
+            return Ok(());
         }
     }
 }
@@ -197,7 +228,14 @@ fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> Result<String, String> {
     let start = *pos;
     while *pos < bytes.len() {
         let c = bytes[*pos];
-        if c == b':' || c == b',' || c == b')' || c == b';' || c == b'[' || c.is_ascii_whitespace() {
+        if c == b':'
+            || c == b','
+            || c == b')'
+            || c == b'('
+            || c == b';'
+            || c == b'['
+            || c.is_ascii_whitespace()
+        {
             break;
         }
         *pos += 1;
@@ -220,9 +258,11 @@ fn label_from_utf8(bytes: Vec<u8>, start: usize) -> Result<String, String> {
 }
 
 /// Skip '[...]' comment blocks (NHX annotations, BEAST metadata, etc.).
-/// Handles nested brackets.
-fn skip_comments_bytes(bytes: &[u8], pos: &mut usize) {
+/// Handles nested brackets. Errors if a comment is never closed, since the
+/// rest of the tree would otherwise be swallowed as comment text.
+fn skip_comments_bytes(bytes: &[u8], pos: &mut usize) -> Result<(), String> {
     while *pos < bytes.len() && bytes[*pos] == b'[' {
+        let open_pos = *pos;
         *pos += 1;
         let mut depth: usize = 1;
         while *pos < bytes.len() && depth > 0 {
@@ -233,7 +273,14 @@ fn skip_comments_bytes(bytes: &[u8], pos: &mut usize) {
             }
             *pos += 1;
         }
+        if depth > 0 {
+            return Err(format!(
+                "Unclosed comment starting at position {}: no matching ']'.",
+                open_pos
+            ));
+        }
     }
+    Ok(())
 }
 
 /// Parse optional ":length" — returns 0.0 if no colon present.
@@ -513,10 +560,42 @@ mod tests {
 
     #[test]
     fn test_unmatched_paren_error() {
-        // Unmatched open paren with no content — should not succeed with valid tree
-        // (depending on parser leniency, it may error or produce garbage)
-        let result = parse_newick("((A:1.0,B:2.0)");
-        // At minimum it should not panic
-        let _ = result;
+        // A truncated tree must be rejected: closing it silently would give a
+        // matrix whose branch lengths are wrong without any warning.
+        let err = parse_newick("((A:1.0,B:2.0)").err().expect("truncated tree should error");
+        assert!(err.contains("truncated"), "Error message: {}", err);
+        assert!(parse_newick("((A:1.0,B:2.0):0.5,(C:1.0,D:2.0").is_err());
+    }
+
+    #[test]
+    fn test_trailing_content_error() {
+        let err = parse_newick("(A:1.0,B:2.0);garbage").err().expect("trailing junk should error");
+        assert!(err.contains("Unexpected content"), "Error message: {}", err);
+    }
+
+    #[test]
+    fn test_multiple_trees_error() {
+        let err = parse_newick("(A:1,B:2);\n(C:1,D:2);\n")
+            .err().expect("a multi-tree file should error");
+        assert!(err.contains("more than one tree"), "Error message: {}", err);
+    }
+
+    #[test]
+    fn test_free_text_is_not_a_leaf() {
+        // Plain prose used to parse as one enormous leaf label
+        assert!(parse_newick("not a tree at all (((").is_err());
+    }
+
+    #[test]
+    fn test_unclosed_comment_error() {
+        let err = parse_newick("((A:1.0,B:2.0):0.5,C:3.0)[unclosed;")
+            .err().expect("unclosed comment should error");
+        assert!(err.contains("Unclosed comment"), "Error message: {}", err);
+    }
+
+    #[test]
+    fn test_trailing_comment_allowed() {
+        let raw = parse_newick("(A:1.0,B:2.0); [ generated by iqtree ]").unwrap();
+        assert_eq!(raw.children.len(), 2);
     }
 }
