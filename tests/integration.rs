@@ -167,6 +167,52 @@ fn test_binary_empty_input_error() {
 }
 
 #[test]
+fn test_binary_rejects_whitespace_label_in_lower_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "(('Taxon A':1.0,'Taxon B':2.0):0.5,C:3.0);").unwrap();
+
+    // PHYLIP readers split the name off at the first whitespace
+    let (code, _stdout, stderr) = run(&["--lower", tree.to_str().unwrap()], None);
+    assert_ne!(code, 0, "a spaced label should be rejected in --lower mode");
+    assert!(stderr.contains("whitespace"), "stderr: {}", stderr);
+
+    // The square TSV is tab-delimited and has no such problem
+    let (code, stdout, _) = run(&[tree.to_str().unwrap()], None);
+    assert_eq!(code, 0, "the same tree must still work without --lower");
+    assert!(stdout.contains("Taxon A\t"), "stdout: {}", stdout);
+}
+
+#[test]
+fn test_binary_warns_lower_drops_lmm_diagonal() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "((A:1.95,B:3.25):0.35,(C:0.80,D:1.20):0.50);").unwrap();
+
+    let (code, _stdout, stderr) = run(&["--lmm", "--lower", tree.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+    assert!(stderr.contains("diagonal"), "stderr: {}", stderr);
+
+    // Patristic loses nothing, so it must stay quiet
+    let (code, _stdout, stderr) = run(&["--lower", tree.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+    assert!(!stderr.contains("diagonal"), "stderr: {}", stderr);
+}
+
+#[test]
+fn test_binary_names_gzip_input() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk.gz");
+    // Gzip magic bytes are enough; the file never gets decompressed
+    std::fs::write(&tree, [0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00]).unwrap();
+
+    let (code, _stdout, stderr) = run(&[tree.to_str().unwrap()], None);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("gzip"), "stderr should name gzip: {}", stderr);
+    assert!(stderr.contains("gunzip -c"), "and say what to do: {}", stderr);
+}
+
+#[test]
 fn test_binary_rejects_newline_in_label() {
     let dir = tempfile::tempdir().unwrap();
     let tree = dir.path().join("t.nwk");

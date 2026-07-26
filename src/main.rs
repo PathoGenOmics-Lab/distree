@@ -164,14 +164,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Read input from file or stdin
-    let mut newick_str = String::new();
+    let source = if tree_path == "-" { "standard input" } else { tree_path.as_str() };
+    let mut raw_input: Vec<u8> = Vec::new();
     if tree_path == "-" {
-        io::stdin().read_to_string(&mut newick_str)?;
+        io::stdin().read_to_end(&mut raw_input)?;
     } else {
         File::open(&tree_path)
             .map_err(|e| format!("Cannot open '{}': {}", tree_path, e))?
-            .read_to_string(&mut newick_str)?;
+            .read_to_end(&mut raw_input)?;
     }
+
+    // Large trees are usually shipped compressed, and a gzip file reaching the
+    // UTF-8 check produced "stream did not contain valid UTF-8", which says
+    // nothing about what to do next.
+    if raw_input.starts_with(&[0x1f, 0x8b]) {
+        return Err(format!(
+            "{} is gzip-compressed. distree reads plain text; decompress it on the way in:\n\
+             \x20   gunzip -c {} | distree -",
+            source,
+            if tree_path == "-" { "FILE.nwk.gz" } else { tree_path.as_str() }
+        )
+        .into());
+    }
+
+    let newick_str = String::from_utf8(raw_input).map_err(|_| {
+        format!(
+            "{} is not valid UTF-8 text, so it cannot be a Newick tree.",
+            source
+        )
+    })?;
 
     // Parse the Newick string
     let raw_root = parse_newick(&newick_str)
@@ -268,6 +289,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+            // A PHYLIP row is "name<whitespace>values", so a reader that splits
+            // on whitespace reads "Taxon A<TAB>4.5" as three fields and every
+            // row after it lands one column out. The square TSV is delimited by
+            // tabs alone and does not have the problem.
+            if do_lower && name.chars().any(char::is_whitespace) {
+                return Err(format!(
+                    "Leaf name '{}' contains whitespace, which PHYLIP readers treat as the \
+                     end of the name, so --lower would produce a file they misread. Use an \
+                     underscore, or drop --lower for the square TSV.",
+                    name
+                )
+                .into());
+            }
         }
     }
 
@@ -304,6 +338,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Box::new(BufWriter::with_capacity(WRITE_BUFFER, io::stdout()))
     };
+
+    // The lower triangle has no diagonal. For a distance matrix that loses
+    // nothing, since it is all zeros, but an LMM diagonal is each tip's own
+    // root-to-tip length: real data, and what the off-diagonal covariances have
+    // to be read against.
+    if do_lower && mode == DistMode::Lmm {
+        eprintln!(
+            "Warning: --lower omits the diagonal, which in --lmm mode holds each leaf's \
+             root-to-tip length rather than zeros. Drop --lower to keep it."
+        );
+    }
 
     // Print header
     if do_lower {
