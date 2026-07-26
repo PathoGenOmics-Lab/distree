@@ -175,7 +175,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Warn about negative branch lengths
     if nodes.iter().any(|n| n.length < 0.0) {
-        eprintln!("Warning: negative branch lengths detected in the tree.");
+        eprintln!(
+            "Warning: negative branch lengths detected in the tree. Some distances may come \
+             out negative, and --midpoint cannot locate the diameter reliably."
+        );
     }
 
     // Midpoint-root if requested.
@@ -363,8 +366,15 @@ fn compute_distance(
             let d_i = lca_data.depth_len[leaf_i];
             let d_j = lca_data.depth_len[leaf_j];
             let d_m = lca_data.depth_len[m];
-            // Clamp to 0 to avoid tiny negatives from floating-point arithmetic
-            (d_i + d_j - 2.0 * d_m).max(0.0)
+            // Not clamped to zero. Rounding cannot make this negative:
+            // depth_len accumulates lengths from the root, so with
+            // non-negative branches d_i and d_j are both >= d_m, 2*d_m is
+            // exact, and rounding a non-negative exact result to nearest keeps
+            // it non-negative. The only way to get a negative value here is a
+            // negative branch length, which the tree is warned about, and
+            // rounding that up to zero would silently claim two distinct taxa
+            // sit on top of each other.
+            d_i + d_j - 2.0 * d_m
         }
     }
 }
@@ -536,6 +546,51 @@ mod tests {
         let a = get_leaf(&nodes, "A");
         let d = compute_distance(a, a, DistMode::Patristic, &lca);
         assert_eq!(d, 0.0, "Self-distance must be exactly 0.0, got {}", d);
+    }
+
+    #[test]
+    fn test_patristic_never_negative_on_random_trees() {
+        // Rounding must not produce a negative distance on any tree with
+        // non-negative branch lengths, and a leaf must be exactly 0 from itself
+        let mut rng = crate::testutil::Rng::new(0x5DEE_CE66_D000_0005);
+
+        for _ in 0..200 {
+            let n_leaves = 2 + rng.below(30);
+            let newick = crate::testutil::random_newick(&mut rng, n_leaves);
+            let (nodes, root) = build_tree(&newick);
+            let lca = build_lca_structure(root, &nodes);
+            let leaves: Vec<usize> = nodes
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.children.is_empty() && n.name.is_some())
+                .map(|(i, _)| i)
+                .collect();
+
+            for &i in &leaves {
+                assert_eq!(
+                    compute_distance(i, i, DistMode::Patristic, &lca),
+                    0.0,
+                    "a leaf must be exactly 0.0 from itself in {}",
+                    newick
+                );
+                for &j in &leaves {
+                    let d = compute_distance(i, j, DistMode::Patristic, &lca);
+                    assert!(d >= 0.0, "negative distance {} in {}", d, newick);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_negative_branch_length_gives_negative_distance() {
+        // A tree with negative branches is warned about; reporting 0.0 would
+        // claim two distinct taxa sit on top of each other
+        let (nodes, root) = build_tree("(A:-2.0,B:0.5);");
+        let lca = build_lca_structure(root, &nodes);
+        let a = get_leaf(&nodes, "A");
+        let b = get_leaf(&nodes, "B");
+        let d = compute_distance(a, b, DistMode::Patristic, &lca);
+        assert!((d - (-1.5)).abs() < 1e-12, "expected -1.5, got {}", d);
     }
 
     #[test]
