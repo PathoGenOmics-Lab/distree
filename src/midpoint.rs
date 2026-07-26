@@ -167,6 +167,166 @@ mod tests {
         lca.depth_len[leaf_i] + lca.depth_len[leaf_j] - 2.0 * lca.depth_len[m]
     }
 
+    /// xorshift64, so the randomised checks stay reproducible without pulling
+    /// in a dependency.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next_u64() % n as u64) as usize
+        }
+
+        /// Zero one branch in seven: collapsing weakly supported branches
+        /// leaves plenty of them in real trees.
+        fn length(&mut self) -> f64 {
+            if self.below(7) == 0 {
+                return 0.0;
+            }
+            0.01 + (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64 * 2.0
+        }
+    }
+
+    /// Join random groups of 2 or 3 until one tree remains, so the sample
+    /// covers polytomies as well as strictly bifurcating trees.
+    fn random_newick(rng: &mut Rng, n_leaves: usize) -> String {
+        let mut pool: Vec<String> = (0..n_leaves)
+            .map(|i| format!("L{}:{:.6}", i, rng.length()))
+            .collect();
+        while pool.len() > 1 {
+            let arity = if pool.len() > 2 && rng.below(4) == 0 { 3 } else { 2 };
+            let children: Vec<String> = (0..arity)
+                .map(|_| pool.swap_remove(rng.below(pool.len())))
+                .collect();
+            pool.push(format!("({}):{:.6}", children.join(","), rng.length()));
+        }
+        format!("{};", pool.pop().unwrap())
+    }
+
+    /// Every node reachable exactly once, every child pointing back at its parent.
+    fn assert_tree_is_consistent(nodes: &[Node], root: usize) {
+        assert!(nodes[root].parent.is_none(), "the root must have no parent");
+        let mut visited = vec![false; nodes.len()];
+        let mut stack = vec![root];
+        visited[root] = true;
+        while let Some(u) = stack.pop() {
+            for &v in &nodes[u].children {
+                assert_eq!(
+                    nodes[v].parent,
+                    Some(u),
+                    "child {} does not point back at parent {}",
+                    v,
+                    u
+                );
+                assert!(!visited[v], "node {} reached twice: the graph has a cycle", v);
+                visited[v] = true;
+                stack.push(v);
+            }
+        }
+        for (i, seen) in visited.iter().enumerate() {
+            assert!(seen, "node {} is unreachable from the root", i);
+        }
+    }
+
+    fn leaf_indices(nodes: &[Node]) -> Vec<usize> {
+        nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.children.is_empty() && n.name.is_some())
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    #[test]
+    fn test_midpoint_random_trees() {
+        let mut rng = Rng(0x9E3779B97F4A7C15);
+
+        for case in 0..300 {
+            let n_leaves = 2 + rng.below(24);
+            let newick = random_newick(&mut rng, n_leaves);
+
+            let raw = parse_newick(&newick).unwrap();
+            let mut before = Vec::new();
+            let root_before = flatten_raw(&raw, None, &mut before);
+            let lca_before = build_lca_structure(root_before, &before);
+            let leaves_before = leaf_indices(&before);
+
+            // Names in flatten order, so the two trees can be lined up by label
+            let names: Vec<String> = leaves_before
+                .iter()
+                .map(|&i| before[i].name.clone().unwrap())
+                .collect();
+
+            let mut diameter: f64 = 0.0;
+            let mut dist_before = vec![vec![0.0; leaves_before.len()]; leaves_before.len()];
+            for (a, &i) in leaves_before.iter().enumerate() {
+                for (b, &j) in leaves_before.iter().enumerate() {
+                    let d = patristic_distance(i, j, &lca_before);
+                    dist_before[a][b] = d;
+                    diameter = diameter.max(d);
+                }
+            }
+
+            let raw2 = parse_newick(&newick).unwrap();
+            let mut after = Vec::new();
+            let root_after = flatten_raw(&raw2, None, &mut after);
+            let new_root = midpoint_root(root_after, &mut after);
+
+            assert_tree_is_consistent(&after, new_root);
+
+            let lca_after = build_lca_structure(new_root, &after);
+            let leaves_after: Vec<usize> = names
+                .iter()
+                .map(|name| {
+                    after
+                        .iter()
+                        .position(|n| n.name.as_deref() == Some(name.as_str()))
+                        .unwrap_or_else(|| panic!("case {}: leaf {} vanished", case, name))
+                })
+                .collect();
+
+            for a in 0..leaves_after.len() {
+                for b in 0..leaves_after.len() {
+                    let d = patristic_distance(leaves_after[a], leaves_after[b], &lca_after);
+                    assert!(
+                        (d - dist_before[a][b]).abs() < 1e-9,
+                        "case {}: rooting changed d({},{}) from {} to {}\n{}",
+                        case,
+                        names[a],
+                        names[b],
+                        dist_before[a][b],
+                        d,
+                        newick
+                    );
+                }
+            }
+
+            // The defining property: the two longest root-to-tip paths are
+            // equal, so the deepest tip sits exactly half a diameter away.
+            let deepest = leaves_after
+                .iter()
+                .map(|&i| lca_after.depth_len[i])
+                .fold(0.0_f64, f64::max);
+            assert!(
+                (deepest - diameter / 2.0).abs() < 1e-9,
+                "case {}: deepest tip is {} from the root, expected {} (diameter {})\n{}",
+                case,
+                deepest,
+                diameter / 2.0,
+                diameter,
+                newick
+            );
+        }
+    }
+
     #[test]
     fn test_midpoint_simple() {
         // ((A:1,B:1):1,(C:1,D:1):1);
