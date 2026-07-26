@@ -102,9 +102,9 @@ Options:
 
 ### Argument & Option Details
 
-* `<phylogeny>`: Path to the input tree in Newick format. Use `-` to read from stdin. Leaf labels must be unique.
+* `<phylogeny>`: Path to the input tree in Newick format. Use `-` to read from stdin. Leaf labels must be unique, and the file must hold exactly one tree.
 
-* `--midpoint`: Re-root at the midpoint of the longest path before computing distances.
+* `--midpoint`: Re-root at the midpoint of the longest path before computing distances. Ignored with `--topology`, where the number of edges between two leaves does not depend on where the tree is rooted.
 
 * `--lmm`: Var-covar matrix for Phylogenetic Comparative Methods. Each entry (i, j) = depth of MRCA(i, j). Mutually exclusive with `--topology`.
 
@@ -112,9 +112,9 @@ Options:
 
 * `--lower`: PHYLIP lower-triangle format. Outputs a header line with the number of taxa, followed by one row per taxon with its label and the lower triangle of distances (no diagonal). Compatible with PHYLIP, Mash, and tools expecting this standard format.
 
-* `-p, --precision <N>`: Decimal places in output (default: 10). Applies to patristic and LMM modes.
+* `-p, --precision <N>`: Decimal places in output (default: 10, maximum: 30). Applies to patristic and LMM modes. A 64-bit float holds about 17 significant digits, so anything past that is padding.
 
-* `-t, --threads <N>`: Thread count for parallel computation. Defaults to all available cores.
+* `-t, --threads <N>`: Thread count for parallel computation. Must be at least 1; omit the flag to use all available cores.
 
 * `-o, --output <FILE>`: Write TSV to file instead of stdout.
 
@@ -245,9 +245,12 @@ LeafD	4.000	5.300	2.000
 
 ## Troubleshooting and Tips
 
-* **Invalid Newick**: Ensure your Newick tree is syntactically correct (matching parentheses, semicolon at end). `distree` will error if parsing fails.
-* **Whitespace in Labels**: Leaf labels may contain spaces if they are enclosed in single or double quotes in the Newick file (e.g., `'Taxon A':1.0`). The parser handles quoted labels correctly. Tab characters (`\t`) in labels are rejected outright, as they would silently corrupt TSV output — replace them with underscores before running distree.
-* **NHX and BEAST annotations**: Bracket-enclosed metadata (`[&&NHX:...]`, `[&rate=...]`) is silently skipped. Branch lengths and labels are preserved.
+* **Invalid Newick**: `distree` errors out rather than guessing, and the message names the offending position. It rejects unbalanced parentheses (a truncated file would otherwise produce a matrix with quietly wrong branch lengths), unclosed quotes and comments, and anything left over after the tree. The trailing semicolon is optional.
+* **One tree per file**: A file holding several trees (bootstrap replicates, a posterior sample) is rejected instead of silently using the first one. Split it first.
+* **Whitespace in Labels**: Leaf labels may contain spaces if they are enclosed in single or double quotes in the Newick file (e.g., `'Taxon A':1.0`). A doubled quote inside a quoted label is the escape for a literal one (`'it''s'` → `it's`). Tabs, newlines and carriage returns in labels are rejected outright, as they would split a row and corrupt the output; replace them with underscores before running distree.
+* **Non-ASCII labels**: Accents, Greek letters and CJK text are passed through unchanged, so labels keep matching the sample names used downstream.
+* **NHX and BEAST annotations**: Bracket-enclosed metadata (`[&&NHX:...]`, `[&rate=...]`) is silently skipped, before or after the label, as is the `[&R]` / `[&U]` rooting marker that IQ-TREE, MrBayes and BEAST write at the start of the file. Branch lengths and labels are preserved.
+* **Negative branch lengths**: Reported as a warning and carried through to the output, so a neighbour-joining tree can yield a negative distance. They also make `--midpoint` unreliable, since locating the longest path assumes non-negative lengths.
 * **Choosing Distance Type**:
 
   * Use `--lmm` if performing phylogenetic comparative analyses (e.g., trait evolution, PGLS).
