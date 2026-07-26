@@ -3,6 +3,7 @@
 ## [1.0.1] - 2026-04-04
 
 ### Fixed
+- Parallel computation now speeds the run up instead of slowing it down. One parallel job per row could not pay for synchronising the thread pool, and float formatting sat in the serial write loop; rows are now batched and each worker formats its own. A 20,000-tip matrix went from 10.6 s to 1.6 s, and an 8,000-tip one now scales from 1.26 s on one core to 0.21 s on eight
 - Trees prefixed with a `[&R]` / `[&U]` rooting marker, or carrying a comment before a label, no longer fail to parse
 - Non-ASCII leaf labels (accents, Greek, CJK) are preserved instead of being mangled into mojibake
 - Truncated trees, trailing content, unclosed comments and free-form text are rejected instead of yielding a plausible but wrong matrix
@@ -35,11 +36,14 @@
 - Warning when no branch lengths are detected in patristic mode
 - Warning when negative branch lengths are found in the tree
 - CITATION.cff with DOI
+- MkDocs Material documentation site, published to GitHub Pages
 - Comprehensive test suite (73 tests), including randomised checks of midpoint rooting and of MRCA queries against a brute-force walk
 
 ### Changed
 - Codebase split into modules: `parser.rs`, `tree.rs`, `lca.rs`, `midpoint.rs`
 - LCA binary-lifting table stores plain `usize` rather than `Option<usize>`, halving the memory it needs
+- Output buffer raised from 8 KB to 1 MB, so a multi-gigabyte matrix is not hundreds of thousands of write syscalls
+- The input text and the recursive parse tree are released once the flat node array is built, rather than held to the end of the run
 - Version string now derived from Cargo.toml via `env!("CARGO_PKG_VERSION")`
 - Removed unused `--format` flag
 - Fixed clippy warnings (`&Vec<Node>` → `&[Node]`)
