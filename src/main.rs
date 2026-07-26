@@ -176,9 +176,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Warning: negative branch lengths detected in the tree.");
     }
 
-    // Midpoint-root if requested
+    // Midpoint-root if requested.
+    //
+    // Topological distance counts edges and does not depend on where the tree
+    // is rooted, so rooting can only distort it: the node inserted at the
+    // midpoint splits one edge in two and adds 1 to every pair whose path
+    // crosses it. Skip the rooting rather than report those inflated counts.
     if do_midpoint {
-        root_idx = midpoint_root(root_idx, &mut nodes);
+        if mode == DistMode::Topology {
+            eprintln!(
+                "Warning: --midpoint is ignored in --topology mode. Edge counts do not depend \
+                 on the root, and the node inserted at the midpoint would add 1 to every \
+                 distance crossing that edge."
+            );
+        } else {
+            root_idx = midpoint_root(root_idx, &mut nodes);
+        }
     }
 
     // Build LCA

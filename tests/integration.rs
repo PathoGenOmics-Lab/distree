@@ -81,6 +81,44 @@ fn test_binary_topology_flag() {
 }
 
 #[test]
+fn test_binary_midpoint_does_not_inflate_topology() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "((A:1,B:1):1,(C:1,D:1):1);").unwrap();
+
+    let (code, plain, _) = run(&["--topology", tree.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+    let (code, rooted, stderr) = run(
+        &["--topology", "--midpoint", tree.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(code, 0);
+    assert_eq!(
+        plain, rooted,
+        "rooting must not change the number of edges between two leaves"
+    );
+    assert!(stderr.contains("--midpoint"), "stderr: {}", stderr);
+    // A-C crosses the root: 2 edges up + 2 edges down
+    assert!(plain.contains("\t4\t"), "unexpected matrix:\n{}", plain);
+}
+
+#[test]
+fn test_binary_midpoint_preserves_patristic() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "(((A:0.5,B:0.3):0.4,C:0.9):0.1,D:1.2);").unwrap();
+
+    let (code, plain, _) = run(&[tree.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+    let (code, rooted, _) = run(&["--midpoint", tree.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+    assert_eq!(
+        plain, rooted,
+        "patristic distances do not depend on the root"
+    );
+}
+
+#[test]
 fn test_binary_lower_triangle() {
     let dir = tempfile::tempdir().unwrap();
     let tree = dir.path().join("t.nwk");
