@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, "*.*.x", "*.x"]
+    branches: ["**"]
   pull_request:
-    branches: [main]
+    branches: ["**"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,8 +19,8 @@ jobs:
         with:
           components: clippy
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test
-      - name: Build release
-        run: cargo build --release
+      - name: Test release
+        run: cargo test --release
