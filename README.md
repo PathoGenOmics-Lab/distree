@@ -126,29 +126,51 @@ The tool outputs a tab-separated values (TSV) matrix.
 
 2. Each subsequent line begins with a leaf label (sorted alphabetically), followed by N columns of distances (depending on the chosen mode) to every other leaf in the same sorted order.
 
-Example (patristic distances):
+All three examples below are the real output of `distree -p 3` for one tree:
 
-```LeafA LeafB	LeafC
-LeafA	0.000	5.200	3.100
-LeafB	5.200	0.000	4.400
-LeafC	3.100	4.400	0.000
+```
+((LeafA:1.95,LeafB:3.25):0.35,(LeafC:0.80,LeafD:1.20):0.50);
 ```
 
-Example (topological distances):
+Patristic distances (default), the sum of branch lengths along the path:
 
-```LeafA LeafB	LeafC	LeafD
-LeafA	0	2	3	1
-LeafB	2	0	1	3
-LeafC	3	1	0	4
-LeafD	1	3	4	0
+```
+	LeafA	LeafB	LeafC	LeafD
+LeafA	0.000	5.200	3.600	4.000
+LeafB	5.200	0.000	4.900	5.300
+LeafC	3.600	4.900	0.000	2.000
+LeafD	4.000	5.300	2.000	0.000
 ```
 
-Example (LMM depths):
+Topological distances (`--topology`), the number of edges along the path:
 
-```LeafA LeafB	LeafC
-LeafA	7.000	3.000	5.000
-LeafB	3.000	7.000	2.500
-LeafC	5.000	2.500	7.000
+```
+	LeafA	LeafB	LeafC	LeafD
+LeafA	0	2	4	4
+LeafB	2	0	4	4
+LeafC	4	4	0	2
+LeafD	4	4	2	0
+```
+
+LMM depths (`--lmm`), the root-to-MRCA distance. The diagonal is each leaf's
+own root-to-tip length, and pairs meeting at the root score 0:
+
+```
+	LeafA	LeafB	LeafC	LeafD
+LeafA	2.300	0.350	0.000	0.000
+LeafB	0.350	3.600	0.000	0.000
+LeafC	0.000	0.000	1.300	0.500
+LeafD	0.000	0.000	0.500	1.700
+```
+
+PHYLIP lower triangle (`--lower`): taxa count, then one row per taxon:
+
+```
+4
+LeafA
+LeafB	5.200
+LeafC	3.600	4.900
+LeafD	4.000	5.300	2.000
 ```
 
 ## Detailed Use Cases
