@@ -685,6 +685,76 @@ fn read_taxa_list(path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>
     Ok(wanted)
 }
 
+/// Powers of ten that are exact as f64, which is all of them up to 1e22.
+const POW10: [f64; 16] = [
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+];
+
+/// Write `value` with `precision` decimals, or return false and write nothing.
+///
+/// `write!("{:.p$}")` goes through `core::fmt` and an exact decimal expansion
+/// of the float, which is correct and slow: it was around half the cost of a
+/// text run. Scaling by a power of ten and emitting the digits by hand is
+/// roughly seven times faster.
+///
+/// It is only safe where the answer is not in doubt. Multiplying by 10^p
+/// rounds once, by at most `|scaled| * 2^-53`, and if that is enough to carry
+/// the product across the nearest `.5` boundary then which way the exact value
+/// rounds is unknowable from here. Those cases return false and go to the
+/// formatter, which is why this can be fast without being approximate.
+#[inline]
+fn write_fixed_fast(out: &mut Vec<u8>, value: f64, precision: usize) -> bool {
+    if precision >= POW10.len() || !value.is_finite() {
+        return false;
+    }
+    let scaled = value * POW10[precision];
+    // Past 2^53 the integers are no longer consecutive, so the digits below
+    // would be invented.
+    if scaled.abs() >= 9.007_199_254_740_992e15 {
+        return false;
+    }
+
+    let distance_from_tie = ((scaled - scaled.floor()) - 0.5).abs();
+    let rounding_error = scaled.abs() * f64::EPSILON + f64::MIN_POSITIVE;
+    if distance_from_tie <= rounding_error {
+        return false;
+    }
+
+    let rounded = scaled.round() as i64;
+    // The sign comes from the input rather than the rounded integer, so a small
+    // negative value that rounds to zero still prints as "-0.00", matching the
+    // standard formatter.
+    let negative = value.is_sign_negative();
+
+    let mut buf = [0u8; 32];
+    let mut at = buf.len();
+    let mut digits = rounded.unsigned_abs();
+    for _ in 0..precision {
+        at -= 1;
+        buf[at] = b'0' + (digits % 10) as u8;
+        digits /= 10;
+    }
+    if precision > 0 {
+        at -= 1;
+        buf[at] = b'.';
+    }
+    if digits == 0 {
+        at -= 1;
+        buf[at] = b'0';
+    }
+    while digits > 0 {
+        at -= 1;
+        buf[at] = b'0' + (digits % 10) as u8;
+        digits /= 10;
+    }
+    if negative {
+        at -= 1;
+        buf[at] = b'-';
+    }
+    out.extend_from_slice(&buf[at..]);
+    true
+}
+
 /// Append a single distance value to a row buffer.
 ///
 /// Topology mode outputs integers; patristic and LMM use `precision` decimal
@@ -692,10 +762,138 @@ fn read_taxa_list(path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>
 /// inside the parallel row builder.
 #[inline]
 fn format_distance(out: &mut Vec<u8>, dist: f64, mode: DistMode, precision: usize) {
-    let result = if mode == DistMode::Topology {
-        write!(out, "{}", dist as i64)
-    } else {
-        write!(out, "{:.prec$}", dist, prec = precision)
-    };
-    result.expect("writing to a Vec<u8> cannot fail");
+    if mode == DistMode::Topology {
+        write!(out, "{}", dist as i64).expect("writing to a Vec<u8> cannot fail");
+        return;
+    }
+    if write_fixed_fast(out, dist, precision) {
+        return;
+    }
+    write!(out, "{:.prec$}", dist, prec = precision).expect("writing to a Vec<u8> cannot fail");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// xorshift64, so a failure is reproducible.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+
+        fn unit(&mut self) -> f64 {
+            (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    /// The fast path either produces exactly what the standard formatter would,
+    /// or declines. Anything else is a silently wrong number in the matrix.
+    fn assert_agrees(value: f64, precision: usize) {
+        let mut fast = Vec::new();
+        if !write_fixed_fast(&mut fast, value, precision) {
+            return; // declined, so the formatter handles it
+        }
+        let slow = format!("{:.prec$}", value, prec = precision);
+        assert_eq!(
+            String::from_utf8(fast).unwrap(),
+            slow,
+            "fast path disagrees for {:e} at {} decimals",
+            value,
+            precision
+        );
+    }
+
+    #[test]
+    fn test_fast_formatter_matches_std_on_random_values() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        for _ in 0..200_000 {
+            let bits = rng.next_u64();
+            let magnitude = (bits % 24) as i32 - 12;
+            let sign = if bits & 1 == 0 { 1.0 } else { -1.0 };
+            let value = rng.unit() * 10f64.powi(magnitude) * sign;
+            assert_agrees(value, (rng.next_u64() % 16) as usize);
+        }
+    }
+
+    #[test]
+    fn test_fast_formatter_matches_std_near_rounding_boundaries() {
+        // Exact halves are where a scaled-integer shortcut goes wrong, so walk
+        // straight down the middle of them at every precision.
+        for precision in 0..16usize {
+            let step = 10f64.powi(-(precision as i32));
+            for i in 0..4_000u64 {
+                for delta in [0.0, 0.5, -0.5, 0.499_999_999, 0.500_000_001, 1.0 / 3.0] {
+                    assert_agrees((i as f64 + delta) * step, precision);
+                    assert_agrees(-(i as f64 + delta) * step, precision);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_fast_formatter_matches_std_on_distance_shaped_values() {
+        // What distree actually emits: small positive distances, at the
+        // precisions people use.
+        let mut rng = Rng(0x2545_F491_4F6C_DD1D);
+        for _ in 0..100_000 {
+            let value = rng.unit() * 1e-4;
+            for precision in [0usize, 3, 6, 9, 10, 12, 15] {
+                assert_agrees(value, precision);
+                assert_agrees(value * 4_411_532.0, precision);
+            }
+        }
+    }
+
+    #[test]
+    fn test_fast_formatter_edge_cases() {
+        let awkward = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            -0.5,
+            0.05,
+            0.005,
+            f64::MIN_POSITIVE,
+            -f64::MIN_POSITIVE,
+            5e-324, // the smallest subnormal
+            1e-300,
+            1e300,
+            9.007_199_254_740_992e15, // 2^53
+            9.007_199_254_740_991e15,
+            0.1,
+            0.2,
+            0.3,
+            1.0 / 3.0,
+            2.0 / 3.0,
+            1e15,
+            1e16,
+            123_456.789_012_345,
+        ];
+        for &value in &awkward {
+            for precision in 0..=MAX_PRECISION {
+                assert_agrees(value, precision);
+            }
+        }
+    }
+
+    #[test]
+    fn test_fast_formatter_declines_rather_than_guesses() {
+        // Anything it cannot do exactly must be refused, not approximated
+        let mut out = Vec::new();
+        assert!(!write_fixed_fast(&mut out, 1.0, 16), "precision past the table");
+        assert!(!write_fixed_fast(&mut out, f64::NAN, 6), "NaN");
+        assert!(!write_fixed_fast(&mut out, f64::INFINITY, 6), "infinity");
+        assert!(!write_fixed_fast(&mut out, 1e300, 6), "past 2^53 once scaled");
+        assert!(out.is_empty(), "a declined value must write nothing");
+    }
 }
