@@ -196,7 +196,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("No labeled leaves found in the tree.".into());
     }
 
-    // Check for duplicate leaf names and tabs in labels
+    // Leaves without a label cannot be named in the matrix, so they are left
+    // out entirely. Say so rather than quietly returning a smaller matrix.
+    let unlabeled_leaves = nodes
+        .iter()
+        .filter(|nd| nd.children.is_empty() && nd.name.is_none())
+        .count();
+    if unlabeled_leaves > 0 {
+        eprintln!(
+            "Warning: {} leaf/leaves have no label and were excluded from the matrix.",
+            unlabeled_leaves
+        );
+    }
+
+    // Check for duplicate leaf names and for characters that would break the
+    // row/column structure of the output
     {
         let mut seen = HashSet::with_capacity(leaf_indices.len());
         for &i in &leaf_indices {
@@ -208,11 +222,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
-            if name.contains('\t') {
+            if let Some(bad) = name.chars().find(|c| matches!(c, '\t' | '\n' | '\r')) {
+                let what = match bad {
+                    '\t' => "a tab character",
+                    '\n' => "a newline",
+                    _ => "a carriage return",
+                };
                 return Err(format!(
-                    "Leaf name '{}' contains a tab character, which would corrupt TSV output. \
-                     Use an underscore or rename the leaf.",
-                    name.replace('\t', "\\t")
+                    "Leaf name '{}' contains {}, which would corrupt the output by splitting \
+                     the row. Use an underscore or rename the leaf.",
+                    name.escape_debug(),
+                    what
                 )
                 .into());
             }

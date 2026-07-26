@@ -128,6 +128,30 @@ fn test_binary_empty_input_error() {
 }
 
 #[test]
+fn test_binary_rejects_newline_in_label() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "((A:1.0,'bad\nlabel':2.0):0.5,C:3.0);").unwrap();
+
+    let (code, _stdout, stderr) = run(&[tree.to_str().unwrap()], None);
+    assert_ne!(code, 0, "a newline in a label should be rejected");
+    assert!(stderr.contains("newline"), "stderr: {}", stderr);
+}
+
+#[test]
+fn test_binary_warns_about_unlabeled_leaves() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "((A:1.0,:2.0):0.5,C:3.0);").unwrap();
+
+    let (code, stdout, stderr) = run(&[tree.to_str().unwrap()], None);
+    assert_eq!(code, 0);
+    assert!(stderr.contains("no label"), "stderr: {}", stderr);
+    // The unlabeled leaf is absent from the matrix, so say so
+    assert_eq!(stdout.lines().count(), 3, "header + A + C");
+}
+
+#[test]
 fn test_binary_rejects_out_of_range_precision() {
     let dir = tempfile::tempdir().unwrap();
     let tree = dir.path().join("t.nwk");
