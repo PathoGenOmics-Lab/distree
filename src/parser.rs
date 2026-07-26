@@ -10,6 +10,20 @@ pub struct RawNode {
     pub children: Vec<RawNode>,
 }
 
+impl Drop for RawNode {
+    /// Dismantle the subtree iteratively.
+    ///
+    /// The compiler-generated drop glue recurses once per level, which
+    /// overflows the stack on the deeply nested trees the parser and the
+    /// flattener were made iterative to support.
+    fn drop(&mut self) {
+        let mut pending = std::mem::take(&mut self.children);
+        while let Some(mut node) = pending.pop() {
+            pending.append(&mut node.children);
+        }
+    }
+}
+
 /// Parse a complete Newick tree from a string.
 ///
 /// Strips whitespace outside of quoted labels before parsing.
@@ -522,6 +536,29 @@ mod tests {
         assert_eq!(raw.children.len(), 2);
         assert_eq!(raw.children[0].children.len(), 2);
         assert_eq!(raw.children[0].length, 0.5);
+    }
+
+    #[test]
+    fn test_deeply_nested_tree_drops_without_overflow() {
+        // A ladder 200,000 levels deep: parsing, flattening and *dropping*
+        // the parse tree all have to stay iterative
+        let depth = 200_000;
+        let mut tree = String::with_capacity(2 * depth + 8);
+        for _ in 0..depth {
+            tree.push('(');
+        }
+        tree.push_str("A:0.1");
+        for _ in 0..depth {
+            tree.push(')');
+        }
+        tree.push(';');
+
+        let raw = parse_newick(&tree).unwrap();
+        let mut nodes = Vec::new();
+        let root = flatten_raw(&raw, None, &mut nodes);
+        assert_eq!(nodes.len(), depth + 1);
+        assert!(nodes[root].parent.is_none());
+        drop(raw);
     }
 
     #[test]
