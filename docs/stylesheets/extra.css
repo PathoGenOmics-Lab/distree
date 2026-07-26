@@ -1,0 +1,139 @@
+/* ==========================================================================
+   distree theme
+   The sage green of the mark for the chrome, a warm clay for anything the
+   reader can act on, so a page has exactly two colours that mean something.
+   ========================================================================== */
+
+[data-md-color-primary="custom"] {
+  --md-primary-fg-color:        #40695e;
+  --md-primary-fg-color--light: #568b7d;
+  --md-primary-fg-color--dark:  #2f4f47;
+}
+
+[data-md-color-accent="custom"] {
+  --md-accent-fg-color: #b25f3c;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: hsl(168, 8%, 9%);
+  --md-code-bg-color:    hsl(168, 7%, 14%);
+}
+[data-md-color-scheme="slate"][data-md-color-accent="custom"] {
+  --md-accent-fg-color: #e39a63;
+}
+
+/* The mark is wide rather than square, so it needs width to stay legible next
+   to the site name. */
+.md-header__button.md-logo img {
+  width: auto;
+  height: 1.5rem;
+}
+
+/* ==========================================================================
+   Typography
+   Material's defaults are a touch loose for a reference site: tighten the
+   headings and give sections more air above than below, so a long page reads
+   as blocks rather than an even stream.
+   ========================================================================== */
+
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset h2 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-top: 2.4em;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+  margin-top: 1.8em;
+}
+
+/* ==========================================================================
+   Tables
+   Most of this site is flag tables and small matrices, and Material lets them
+   stretch to the text column and wrap every cell. Let them scroll instead, and
+   keep the header in place while you read down a long one.
+   ========================================================================== */
+
+.md-typeset table:not([class]) {
+  font-size: 0.72rem;
+  display: table;
+}
+
+.md-typeset table:not([class]) th {
+  position: sticky;
+  top: 0;
+  background: var(--md-default-bg-color);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.md-typeset table:not([class]) td code {
+  white-space: nowrap;
+}
+
+/* A distance matrix is a grid of numbers: right-aligning it makes the decimal
+   points line up, which is the only way to read one by eye. */
+.md-typeset .matrix table:not([class]) td:not(:first-child),
+.md-typeset .matrix table:not([class]) th:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Home page
+   ========================================================================== */
+
+.hero {
+  text-align: center;
+  margin: 0.4rem 0 2.2rem;
+}
+
+.hero .hero-logo {
+  width: 260px;
+  max-width: 80%;
+  margin: 0 auto;
+}
+
+.md-typeset .hero h1 {
+  margin: 0.8rem 0 0;
+  font-size: 2rem;
+}
+
+.md-typeset .hero p {
+  max-width: 34rem;
+  margin: 0.9rem auto 0;
+  font-size: 0.85rem;
+  color: var(--md-default-fg-color--light);
+}
+
+/* Material's own card grid, kept a little tighter than the default. */
+.md-typeset .grid.cards > ul > li {
+  border-radius: 0.4rem;
+  padding: 0.8rem 1rem;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-accent-fg-color);
+}
+
+.md-typeset .grid.cards > ul > li > hr {
+  margin: 0.6rem 0;
+}
+
+.md-typeset .grid.cards .twemoji,
+.md-typeset .grid.cards svg {
+  color: var(--md-primary-fg-color);
+  vertical-align: -0.15em;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .grid.cards svg {
+  color: var(--md-primary-fg-color--light);
+}
