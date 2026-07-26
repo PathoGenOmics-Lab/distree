@@ -29,9 +29,9 @@ Apple M4 Pro with 14 cores:
 |--:|--:|--:|--:|
 | 1,000 | 0.5 M | 0.00 s | 11 MB |
 | 2,000 | 2.0 M | 0.01 s | 24 MB |
-| 4,000 | 8.0 M | 0.06 s | 35 MB |
-| 8,000 | 32 M | 0.23 s | 32 MB |
-| 20,000 | 200 M | 1.8 s | 35 MB |
+| 4,000 | 8.0 M | 0.03 s | 35 MB |
+| 8,000 | 32 M | 0.13 s | 32 MB |
+| 20,000 | 200 M | 1.02 s | 35 MB |
 
 Time is quadratic in the tips, as it must be. Memory is not: it flattens out
 around 35 MB, because past a few thousand tips it is the fixed batch buffer plus
@@ -43,11 +43,11 @@ the LCA table rather than anything that grows with the matrix.
 
 | `-t` | Time | Speedup |
 |--:|--:|--:|
-| 1 | 1.52 s | 1.0x |
-| 2 | 0.66 s | 2.3x |
-| 4 | 0.36 s | 4.2x |
-| 8 | 0.24 s | 6.3x |
-| 14 | 0.23 s | 6.6x |
+| 1 | 0.56 s | 1.0x |
+| 2 | 0.31 s | 1.8x |
+| 4 | 0.18 s | 3.1x |
+| 8 | 0.12 s | 4.7x |
+| 14 | 0.13 s | 4.3x |
 
 Each worker computes and formats whole rows, so the parallel section covers both
 halves of the cost and the curve holds up until it runs into memory bandwidth
@@ -64,6 +64,30 @@ and the single writer.
 
 Set `-t` when you are sharing a machine, or when the run is part of a pipeline
 that is already parallel. Leaving it unset is right for a dedicated node.
+
+## Where the time goes
+
+For a text run, roughly half of it used to be turning floats into decimal
+digits, which is more expensive than computing the distance being printed.
+`write!("{:.p$}")` expands the float to its exact decimal form and goes through
+`core::fmt`; distree instead scales by a power of ten and emits the digits
+directly, which is about seven times faster at that step and cut the whole run
+by a third to a half:
+
+| | Before | After |
+|:--|--:|--:|
+| `--lower -p 6` | 0.22 s | 0.13 s |
+| `--lower -p 10` | 0.24 s | 0.15 s |
+| `-p 10` square | 0.47 s | 0.29 s |
+
+The shortcut is only taken where the answer is not in doubt. Multiplying by
+`10^p` rounds once, and where that could carry the product across the nearest
+`.5` boundary the value goes to the standard formatter instead, so the output is
+byte-identical either way. About one value in a thousand takes that path.
+
+If none of the time should go on formatting at all, [`--npy`](../guide/output.md#numpy-arrays)
+writes raw 64-bit floats and skips it entirely: another 2.6x, at full precision
+and half the file size.
 
 ## Memory
 
@@ -103,10 +127,11 @@ on it. At `-p 10` a cell is 12 to 14 bytes; at `-p 6` it is 8 to 10.
 | 10,000 | 1.3 GB | 900 MB | 450 MB |
 | 50,000 | 33 GB | 22 GB | 11 GB |
 
-Two things follow. Use `--lower` when the reader accepts it, which halves the
-file. And do not ask for more decimals than the branch lengths carry: `-p 6`
-against the default `-p 10` is a third off the file for no loss on any realistic
-tree.
+Three things follow. Use `--lower` when the reader accepts it, which halves the
+file. Do not ask for more decimals than the branch lengths carry: `-p 6` against
+the default `-p 10` is a third off the file for no loss on any realistic tree.
+And if the reader is Python, [`--npy`](../guide/output.md#numpy-arrays) is 8
+bytes a cell at full precision, which beats text at any setting.
 
 Rows are written as they are computed, so a pipeline that consumes them as they
 arrive never holds the whole matrix either:

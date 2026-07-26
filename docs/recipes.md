@@ -162,6 +162,50 @@ distree cladogram.nwk --topology -o topo.tsv
 The same applies when the lengths exist but are not comparable across the tree,
 for instance from concatenated loci with different rates.
 
+## Straight into SciPy, without the text
+
+For anything Python is going to read, `--npy` skips the text round trip
+entirely: exact 64-bit floats, half the file, and none of the formatting cost.
+
+```bash
+distree tree.nwk --lower --npy -o condensed.npy
+```
+
+```python
+import numpy as np
+from scipy.cluster.hierarchy import linkage, fcluster
+
+v = np.load("condensed.npy")                       # the condensed form scipy wants
+labels = open("condensed.npy.labels.txt").read().split()
+
+z = linkage(v, method="single")
+clusters = fcluster(z, t=12 / 4411532, criterion="distance")
+```
+
+Drop `--lower` for the square matrix, which is what `MDS(dissimilarity=
+"precomputed")` and `umap.UMAP(metric="precomputed")` take.
+
+## One cohort out of a big tree
+
+```bash
+distree big.nwk --taxa cohort.txt -p 10 -o cohort.tsv
+```
+
+`cohort.txt` is one label per line, with `#` comments allowed. The distances are
+the ones from the full tree, which is the point: the path between two isolates
+does not change because the isolates between them were left out of the matrix.
+Pruning the tree first would give you different numbers.
+
+Building the list from a metadata table:
+
+```bash
+awk -F'\t' 'NR > 1 && $3 == "Valencia" { print $1 }' metadata.tsv > cohort.txt
+distree big.nwk --taxa cohort.txt --stats -o valencia.tsv
+```
+
+`--stats` then reports both counts, so it is obvious how much of the tree the
+cohort was.
+
 ## Very large trees
 
 Rows are written as they are computed, so nothing needs the whole matrix in one
@@ -169,6 +213,12 @@ piece. Compress on the way out:
 
 ```bash
 distree big.nwk -p 6 --lower | gzip > distances.phy.gz
+```
+
+The input can be gzipped too, and does not need decompressing first:
+
+```bash
+distree big.nwk.gz --lower --npy -o distances.npy
 ```
 
 Or filter as it streams, keeping only the pairs that matter:
@@ -193,6 +243,29 @@ ls trees/*.nwk | xargs -P 8 -I{} sh -c \
 
 `-t 1` matters here: without it every distree would try to use every core and
 they would fight each other.
+
+## Checking a run at a glance
+
+```bash
+distree tree.nwk --stats -o distances.tsv
+```
+
+```
+--- Statistics ---
+Leaves in matrix:  1284
+Nodes in tree:     2567
+Mode:              patristic distance
+Cells written:     1648656
+Minimum:           0.0000002267
+Maximum:           0.0004821553
+Mean:              0.0001839204
+Time:              0.042s
+```
+
+Worth a look before anything downstream. A leaf count that is not what you
+expected usually means the tree was not the one you meant; a maximum in the
+wrong order of magnitude usually means the branch lengths are not in the units
+you assumed.
 
 ## Splitting a multi-tree file
 

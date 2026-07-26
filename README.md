@@ -39,7 +39,10 @@ __and Mireia Coscolla<sup>1</sup>__
 * **LMM (var-covar) matrix**: Outputs the depth (in branch-length units) of the lowest common ancestor (MRCA) for each pair of leaves.
 * **Midpoint rooting**: Optionally re-roots the tree at its midpoint before computing distances.
 * **Low memory footprint**: Streams each row to output immediately, without holding the full matrix in RAM.
-* **Parallel computation**: Uses multiple CPU cores to compute each row in parallel, reducing runtime for large datasets.
+* **Parallel computation**: Uses multiple CPU cores, with the distances and their formatting both spread across them.
+* **NumPy output**: `--npy` writes an exact 64-bit float array instead of text, 2.6x faster and half the size.
+* **Subsets**: `--taxa` restricts the matrix to a list of tips, keeping the distances the full tree gives.
+* **Gzipped input**: reads a compressed tree directly, detected by content rather than by file name.
 
 ## Typical Applications
 

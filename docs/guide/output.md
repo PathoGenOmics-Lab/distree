@@ -94,6 +94,48 @@ and is what those readers expect.
     relaxed form that whitespace-splitting readers, including modern PHYLIP
     builds, accept.
 
+## NumPy arrays
+
+```bash
+distree tree.nwk --npy -o distances.npy
+```
+
+Text is an expensive way to move a large matrix. At twelve decimals a cell is
+fourteen bytes and producing them is most of the run; as a 64-bit float it is
+eight bytes, exact, and costs nothing to write. On an 8,000-tip tree:
+
+| | Time | Size |
+|:--|--:|--:|
+| `--lower -p 12` | 0.26 s | 458 MB |
+| `--lower --npy` | 0.10 s | 244 MB |
+| `-p 12` | 0.56 s | 916 MB |
+| `--npy` | 0.19 s | 488 MB |
+
+`.npy` has nowhere to put labels, so they go to `<FILE>.labels.txt` in row
+order. That is why `--npy` needs `-o` rather than writing to stdout.
+
+```python
+import numpy as np
+m = np.load("distances.npy")
+labels = open("distances.npy.labels.txt").read().split()
+```
+
+With `--lower`, the array is the **condensed vector** rather than PHYLIP's
+lower triangle, because those are two different triangles: SciPy reads the
+upper one row by row. It goes straight into `scipy`:
+
+```python
+import numpy as np
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.spatial.distance import squareform
+
+v = np.load("condensed.npy")          # distree tree.nwk --lower --npy -o condensed.npy
+z = linkage(v, method="single")       # takes the condensed form directly
+full = squareform(v)                  # or expand it to the square matrix
+```
+
+`-p` has no effect here; a 64-bit float carries the value exactly.
+
 ## Precision
 
 ```bash

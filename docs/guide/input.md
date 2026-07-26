@@ -1,11 +1,15 @@
 # Input
 
-distree reads one Newick tree, from a file or from stdin:
+distree reads one Newick tree, from a file or from stdin, plain or gzipped:
 
 ```bash
 distree tree.nwk
+distree tree.nwk.gz
 gunzip -c tree.nwk.gz | distree -
 ```
+
+Compression is detected from the file's leading bytes rather than its name, so
+it works from stdin and on a `.gz` file that was renamed.
 
 ## What is accepted
 
@@ -59,6 +63,7 @@ position, and nothing is written to `-o`.
 | `('unclosed:1,B:2);` | `Unclosed quote starting at position 1.` |
 | `(A:1,B:2)[oops;` | `Unclosed comment starting at position 9: no matching ']'.` |
 | `(A:,B:2);` | `Expected a numeric branch length` |
+| `(A:1e910,B:2);` | `Branch length '1e910' ... is not a finite number.` |
 | `(A:1,A:2);` | `Duplicate leaf name 'A' found. Leaf names must be unique.` |
 | A label holding a tab, newline or carriage return | `contains a tab character, which would corrupt the output by splitting the row` |
 | A tree with no labelled tips | `No labeled leaves found in the tree.` |
@@ -75,6 +80,19 @@ position, and nothing is written to `-o`.
     split -l 1 posterior.trees tree_
     for t in tree_*; do distree "$t" -o "${t}.tsv"; done
     ```
+
+!!! warning "Branch lengths at the edge of what a float can hold"
+
+    An exponent past the range of a 64-bit float, `A:1e910`, does not fail to
+    parse: Rust returns infinity for it. An infinite depth then makes every
+    distance infinite and the diagonal `NaN`, because `inf - inf` is `NaN`, and
+    the whole matrix used to come out that way with a success exit code. Such a
+    branch length is now rejected outright.
+
+    A distance is `d_i + d_j - 2·d_m`, so the same overflow can happen with
+    every individual length finite, if the depths are past half of the float
+    range. The run stops for that too, saying to rescale the tree. Ordinary
+    large values are unaffected: `1e100` still works.
 
 !!! question "Truncated trees"
 

@@ -53,6 +53,10 @@ memory tracks the number of tips, not the square of it.
 
     The TSV layout, PHYLIP lower triangle, precision, and reading it back in.
 
+-   :material-school: **[Tutorial](tutorial.md)**
+
+    A worked outbreak investigation, from the tree to transmission clusters.
+
 -   :material-cog: **[How it works](how-it-works/algorithm.md)**
 
     The parser, the LCA structure, and the streaming loop.
@@ -82,8 +86,9 @@ decimal places, across eight threads. Swap `--topology` for edge counts,
 | **Topological** | The number of edges on that path, ignoring branch lengths |
 | **Variance-covariance** | The root-to-MRCA distance for each pair, the `C` matrix of a PGLS or a phylogenetic mixed model |
 | **Rooting** | Optional midpoint rooting, which matters for `--lmm` and cannot matter for the other two |
-| **Formats** | Square TSV with labels, or a PHYLIP lower triangle |
-| **Input** | Newick from a file or stdin, with quoted labels, polytomies, NHX and BEAST comments, and UTF-8 tip names |
+| **Formats** | Square TSV with labels, a PHYLIP lower triangle, or a NumPy array |
+| **Input** | Newick from a file or stdin, plain or gzipped, with quoted labels, polytomies, NHX and BEAST comments, and UTF-8 tip names |
+| **Subsets** | `--taxa` restricts the matrix to a list of tips, with the distances the full tree gives |
 | **Scale** | Memory grows with the number of tips, not with the matrix; rows stream out as they are computed |
 | **Parallelism** | Each row is computed across all cores, or as many as `-t` allows |
 
