@@ -34,6 +34,14 @@ enum DistMode {
 /// range it accepts: `{:.prec$}` panics outright on very large values.
 const MAX_PRECISION: usize = 30;
 
+/// Target number of cells per parallel batch, which caps the batch buffer at
+/// 8 MB and gives each fork/join enough work to be worth its cost.
+const BATCH_CELLS: usize = 1 << 20;
+
+/// Output buffer size. The default 8 KB turns a multi-gigabyte matrix into
+/// hundreds of thousands of write syscalls.
+const WRITE_BUFFER: usize = 1 << 20;
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -283,11 +291,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // earlier truncated the previous results before a parse error could be
     // reported, leaving the user with an empty file and nothing to fall back on.
     let mut writer: Box<dyn Write> = if let Some(path) = output_path {
-        Box::new(BufWriter::new(File::create(path).map_err(|e| {
-            format!("Cannot write to '{}': {}", path, e)
-        })?))
+        Box::new(BufWriter::with_capacity(
+            WRITE_BUFFER,
+            File::create(path).map_err(|e| format!("Cannot write to '{}': {}", path, e))?,
+        ))
     } else {
-        Box::new(BufWriter::new(io::stdout()))
+        Box::new(BufWriter::with_capacity(WRITE_BUFFER, io::stdout()))
     };
 
     // Print header
@@ -305,27 +314,45 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         writer.write_all(b"\n")?;
     }
 
-    // Compute and print distance matrix (reuse row buffer to avoid per-row allocation)
-    let mut row_buf: Vec<f64> = Vec::with_capacity(n_leaves);
-    for (row_i, &leaf_i) in sorted_leaf_indices.iter().enumerate() {
-        let col_end = if do_lower { row_i } else { n_leaves };
-        let col_slice = &sorted_leaf_indices[..col_end];
+    // Compute and print the distance matrix, a batch of rows at a time.
+    //
+    // The batch is sized so each one carries roughly BATCH_CELLS cells of work,
+    // which bounds the buffer at 8 MB and, more to the point, keeps the
+    // fork/join out of the inner loop. A cell is an MRCA query and three array
+    // reads, so a single row of a small matrix is nowhere near enough work to
+    // pay for synchronising a thread pool: on an 8,000-leaf tree, one job per
+    // row ran *slower* on 14 cores than on one.
+    // Each worker formats its rows as it computes them, so the writer only ever
+    // hands finished bytes to the operating system. Formatting a float to a
+    // fixed number of decimals costs more than the distance it prints, so
+    // leaving it in the serial write loop capped the whole run: at six decimals
+    // it was about two thirds of the work no number of cores could touch.
+    let batch_rows = (BATCH_CELLS / n_leaves).clamp(1, n_leaves);
+    let mut batch: Vec<Vec<u8>> = vec![Vec::new(); batch_rows];
+    let row_width = |row_i: usize| if do_lower { row_i } else { n_leaves };
 
-        row_buf.clear();
-        row_buf.par_extend(
-            col_slice
-                .par_iter()
-                .map(|&leaf_j| compute_distance(leaf_i, leaf_j, mode, &lca_data))
-        );
-        let this_row = &row_buf;
+    let mut first_row = 0;
+    while first_row < n_leaves {
+        let rows = (n_leaves - first_row).min(batch_rows);
 
-        // Row label
-        writer.write_all(sorted_labels[row_i].as_bytes())?;
-        for dist in this_row.iter() {
-            writer.write_all(b"\t")?;
-            format_distance(&mut writer, *dist, mode, precision)?;
+        batch[..rows].par_iter_mut().enumerate().for_each(|(k, out)| {
+            let row_i = first_row + k;
+            let leaf_i = sorted_leaf_indices[row_i];
+            out.clear();
+            out.extend_from_slice(sorted_labels[row_i].as_bytes());
+            for &leaf_j in &sorted_leaf_indices[..row_width(row_i)] {
+                let dist = compute_distance(leaf_i, leaf_j, mode, &lca_data);
+                out.push(b'\t');
+                format_distance(out, dist, mode, precision);
+            }
+            out.push(b'\n');
+        });
+
+        for row in &batch[..rows] {
+            writer.write_all(row)?;
         }
-        writer.write_all(b"\n")?;
+
+        first_row += rows;
     }
 
     // BufWriter flushes on drop but discards whatever error it hits, so a full
@@ -379,21 +406,19 @@ fn compute_distance(
     }
 }
 
-/// Format a single distance value for TSV output.
+/// Append a single distance value to a row buffer.
 ///
-/// Topology mode outputs integers; patristic and LMM use `precision` decimal places.
+/// Topology mode outputs integers; patristic and LMM use `precision` decimal
+/// places. Writing into a `Vec<u8>` cannot fail, which is what lets this run
+/// inside the parallel row builder.
 #[inline]
-fn format_distance(
-    writer: &mut dyn Write,
-    dist: f64,
-    mode: DistMode,
-    precision: usize,
-) -> io::Result<()> {
-    if mode == DistMode::Topology {
-        write!(writer, "{}", dist as i64)
+fn format_distance(out: &mut Vec<u8>, dist: f64, mode: DistMode, precision: usize) {
+    let result = if mode == DistMode::Topology {
+        write!(out, "{}", dist as i64)
     } else {
-        write!(writer, "{:.prec$}", dist, prec = precision)
-    }
+        write!(out, "{:.prec$}", dist, prec = precision)
+    };
+    result.expect("writing to a Vec<u8> cannot fail");
 }
 
 #[cfg(test)]
