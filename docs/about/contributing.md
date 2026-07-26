@@ -49,6 +49,52 @@ The suite is in three places:
   binary-lifting MRCA agrees with walking up from both nodes, over every pair of
   nodes; and a patristic distance is never negative on a tree with non-negative
   branch lengths.
+- **Cross-validation against ape** in `tests/crossvalidation.rs`, checked
+  against reference matrices committed under `tests/fixtures/`.
+- **Mutation testing** in `tests/torture.rs`, which throws truncated, flipped
+  and duplicated Newick at the parser and the pipeline.
+
+### Cross-validating against ape
+
+Everything above is written against the same understanding of the problem as
+the code, so none of it would catch a distance being *defined* wrongly. ape is
+the independent check. With R, `ape` and `phangorn` installed:
+
+```bash
+cargo build --release
+Rscript scripts/crossvalidate.R 250 target/release/distree
+```
+
+It compares all four modes against `cophenetic.phylo`, `vcv.phylo`,
+`cophenetic.phylo` over unit branch lengths, and `phangorn::midpoint`. The
+expected result is agreement to under 1e-9, which is the 12-decimal text
+round-trip, and exactly zero for edge counts.
+
+To refresh the committed fixtures after a deliberate change:
+
+```bash
+Rscript scripts/crossvalidate.R 6 target/release/distree --write-fixtures
+```
+
+The same comparison runs as a weekly GitHub Actions job, and on demand from the
+Actions tab.
+
+### Fuzzing
+
+`tests/torture.rs` runs on every push and needs nothing extra. The
+coverage-guided version needs a nightly toolchain:
+
+```bash
+cargo +nightly install cargo-fuzz
+cargo +nightly fuzz run parse_newick fuzz/seeds
+cargo +nightly fuzz run full_pipeline fuzz/seeds
+```
+
+`parse_newick` throws arbitrary text at the parser; `full_pipeline` takes
+everything that parses and pushes it through flattening, rooting and every
+distance mode. Both assert only that nothing panics and nothing hangs, which is
+a low bar and has already caught a real bug: a branch length of `1e910` parsed
+as infinity and turned the matrix into `inf` with `NaN` down the diagonal.
 
 A parser change wants a case in `src/parser.rs` for what should now parse **and**
 one for what should still be rejected. The failures worth guarding are the ones
