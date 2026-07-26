@@ -2,12 +2,13 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-/// Build the binary once and return its path.
-fn bin() -> std::path::PathBuf {
-    // `cargo test` runs with the project root as cwd; the binary ends up here.
-    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("target/debug/distree");
-    p
+/// Path to the binary under test.
+///
+/// Cargo sets this to the build actually being tested. Pointing at
+/// target/debug by hand meant `cargo test --release` either exercised a stale
+/// debug binary or, with no debug build around, failed to spawn at all.
+fn bin() -> &'static str {
+    env!("CARGO_BIN_EXE_distree")
 }
 
 fn run(args: &[&str], stdin: Option<&str>) -> (i32, String, String) {
