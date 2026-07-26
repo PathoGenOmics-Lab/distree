@@ -22,6 +22,7 @@ __and Mireia Coscolla<sup>1</sup>__
 | Page | Description |
 |:-----|:------------|
 | **[Quick start](https://pathogenomics-lab.github.io/distree/getting-started/quickstart/)** | The handful of commands most runs actually use |
+| **[Tutorial](https://pathogenomics-lab.github.io/distree/tutorial/)** | A worked outbreak investigation, tree to transmission clusters |
 | **[Input](https://pathogenomics-lab.github.io/distree/guide/input/)** | What Newick is accepted, what is rejected, and why |
 | **[Distance modes](https://pathogenomics-lab.github.io/distree/guide/distances/)** | Patristic, topological and var-covar, on one worked example |
 | **[Midpoint rooting](https://pathogenomics-lab.github.io/distree/guide/rooting/)** | When the root changes the answer, and when it cannot |
