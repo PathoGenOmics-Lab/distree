@@ -62,23 +62,50 @@ pub fn parse_newick(input: &str) -> Result<RawNode, String> {
 /// ASCII quote or whitespace byte. Only whole ASCII bytes are dropped, so the
 /// remaining bytes are still valid UTF-8.
 fn strip_whitespace_outside_quotes(s: &str) -> String {
-    let mut out: Vec<u8> = Vec::with_capacity(s.len());
-    let mut in_quote = false;
-    let mut quote_char = b'\0';
-    for &b in s.as_bytes() {
-        if in_quote {
+    let src = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(src.len());
+    // Last non-whitespace byte emitted. A quote only opens a quoted label
+    // where a label may begin: at the very start of the tree, or right after
+    // '(', ',' or ')'. Anywhere else an apostrophe is an ordinary character of
+    // an unquoted label ("O'Brien") or of a comment ("[don't]").
+    let mut previous: Option<u8> = None;
+    let mut i = 0;
+
+    while i < src.len() {
+        let b = src[i];
+        let opens_label = matches!(b, b'\'' | b'"')
+            && matches!(previous, None | Some(b'(') | Some(b',') | Some(b')'));
+
+        if opens_label {
+            // Copy the quoted label verbatim so its whitespace survives,
+            // treating a doubled quote as an escaped literal rather than as a
+            // close followed by a re-open.
             out.push(b);
-            if b == quote_char {
-                in_quote = false;
+            i += 1;
+            while i < src.len() {
+                if src[i] == b {
+                    if src.get(i + 1) == Some(&b) {
+                        out.extend_from_slice(&[b, b]);
+                        i += 2;
+                        continue;
+                    }
+                    out.push(b);
+                    i += 1;
+                    break;
+                }
+                out.push(src[i]);
+                i += 1;
             }
-        } else if b == b'\'' || b == b'"' {
-            in_quote = true;
-            quote_char = b;
+            previous = Some(b);
+        } else if b.is_ascii_whitespace() {
+            i += 1;
+        } else {
             out.push(b);
-        } else if !b.is_ascii_whitespace() {
-            out.push(b);
+            previous = Some(b);
+            i += 1;
         }
     }
+
     String::from_utf8(out).expect("dropping ASCII whitespace preserves UTF-8 validity")
 }
 
@@ -538,6 +565,35 @@ mod tests {
         let input = r#"("a ""name""":1.0,B:2.0);"#;
         let raw = parse_newick(input).unwrap();
         assert_eq!(raw.children[0].name.as_deref(), Some(r#"a "name""#));
+    }
+
+    #[test]
+    fn test_apostrophe_in_unquoted_label() {
+        // An apostrophe mid-label must not be read as an opening quote
+        let raw = parse_newick("(O'Brien:1.0 , B:2.0);").unwrap();
+        assert_eq!(raw.children[0].name.as_deref(), Some("O'Brien"));
+        assert_eq!(raw.children[1].name.as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn test_apostrophe_in_comment() {
+        let raw = parse_newick("(A:1.0[don't panic],B:2.0);").unwrap();
+        assert_eq!(raw.children[0].name.as_deref(), Some("A"));
+        assert_eq!(raw.children[1].length, 2.0);
+    }
+
+    #[test]
+    fn test_escaped_quote_keeps_inner_whitespace() {
+        // The doubled quote must not end the label, or the space after it
+        // would be stripped as if it were outside the quotes
+        let raw = parse_newick(r"('it''s a name':1.0,B:2.0);").unwrap();
+        assert_eq!(raw.children[0].name.as_deref(), Some("it's a name"));
+    }
+
+    #[test]
+    fn test_quoted_internal_node_label() {
+        let raw = parse_newick("((A:1.0,B:2.0)'my clade':0.5,C:3.0);").unwrap();
+        assert_eq!(raw.children[0].name.as_deref(), Some("my clade"));
     }
 
     #[test]
