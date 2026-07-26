@@ -181,6 +181,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut nodes: Vec<Node> = Vec::new();
     let mut root_idx = flatten_raw(&raw_root, None, &mut nodes);
 
+    // Nothing below reads the input text or the recursive parse tree, and on a
+    // large tree they are a second copy of it. Holding them to the end of the
+    // run would carry that alongside the LCA table, which is the peak.
+    drop(raw_root);
+    drop(newick_str);
+
     // Warn about negative branch lengths
     if nodes.iter().any(|n| n.length < 0.0) {
         eprintln!(
