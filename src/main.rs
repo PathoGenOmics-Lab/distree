@@ -29,6 +29,13 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
+            // A closed downstream pipe ("distree tree.nwk | head") is how a
+            // reader says it has seen enough, not a failure to report.
+            if let Some(io_err) = e.downcast_ref::<io::Error>() {
+                if io_err.kind() == io::ErrorKind::BrokenPipe {
+                    return ExitCode::SUCCESS;
+                }
+            }
             eprintln!("Error: {}", e);
             ExitCode::FAILURE
         }
@@ -260,6 +267,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             format_distance(&mut writer, *dist, mode, precision)?;
         }
         writer.write_all(b"\n")?;
+    }
+
+    // BufWriter flushes on drop but discards whatever error it hits, so a full
+    // disk or a failing filesystem produced a truncated matrix and exit code 0.
+    if let Err(e) = writer.flush() {
+        if e.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(match output_path {
+            Some(path) => format!("Failed to write '{}': {}", path, e).into(),
+            None => format!("Failed to write to stdout: {}", e).into(),
+        });
     }
 
     Ok(())
