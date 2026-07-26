@@ -17,6 +17,20 @@ __and Mireia Coscolla<sup>1</sup>__
 
 `distree` is a command-line tool written in Rust that extracts a distance matrix from a phylogenetic tree in Newick format. It is designed to handle large trees with thousands of sequences by using a low-memory, parallelized approach.
 
+📖 **Full documentation: <https://pathogenomics-lab.github.io/distree/>**
+
+| Page | Description |
+|:-----|:------------|
+| **[Quick start](https://pathogenomics-lab.github.io/distree/getting-started/quickstart/)** | The handful of commands most runs actually use |
+| **[Input](https://pathogenomics-lab.github.io/distree/guide/input/)** | What Newick is accepted, what is rejected, and why |
+| **[Distance modes](https://pathogenomics-lab.github.io/distree/guide/distances/)** | Patristic, topological and var-covar, on one worked example |
+| **[Midpoint rooting](https://pathogenomics-lab.github.io/distree/guide/rooting/)** | When the root changes the answer, and when it cannot |
+| **[Output](https://pathogenomics-lab.github.io/distree/guide/output/)** | TSV, PHYLIP lower triangle, precision, reading it back |
+| **[CLI reference](https://pathogenomics-lab.github.io/distree/guide/cli/)** | Every flag, every default, every message |
+| **[How it works](https://pathogenomics-lab.github.io/distree/how-it-works/algorithm/)** | The parser, the LCA structure, the streaming loop |
+| **[Performance](https://pathogenomics-lab.github.io/distree/how-it-works/performance/)** | Measured speed, memory and thread scaling |
+| **[Recipes](https://pathogenomics-lab.github.io/distree/recipes/)** | PCoA, transmission clusters, PGLS, neighbour-joining |
+
 ## Features
 
 * **Patristic distances**: Computes the sum of branch lengths between every pair of leaves (taxa).
