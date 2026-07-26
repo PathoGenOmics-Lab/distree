@@ -221,6 +221,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Build LCA
     let lca_data = build_lca_structure(root_idx, &nodes);
 
+    // A distance is d_i + d_j - 2*d_m, so a root-to-tip depth past half of
+    // f64's range overflows that sum to infinity, and inf - inf is NaN. The
+    // matrix comes out as inf with NaN down the diagonal, which is not a
+    // failure any downstream tool would notice.
+    let deepest = lca_data.depth_len.iter().copied().fold(0.0_f64, f64::max);
+    if !(deepest * 2.0).is_finite() {
+        return Err(format!(
+            "Branch lengths are too large to compute distances with: the deepest leaf is {:e} \
+             from the root, and summing two such depths overflows a 64-bit float. Rescale the \
+             tree.",
+            deepest
+        )
+        .into());
+    }
+
     // Collect leaves
     let leaf_indices: Vec<usize> = nodes
         .iter()

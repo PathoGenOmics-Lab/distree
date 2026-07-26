@@ -355,9 +355,21 @@ fn parse_length_bytes(bytes: &[u8], pos: &mut usize) -> Result<f64, String> {
     }
     let numstr = std::str::from_utf8(&bytes[start..*pos])
         .map_err(|_| "Invalid UTF-8 in branch length".to_string())?;
-    numstr
+    let value = numstr
         .parse::<f64>()
-        .map_err(|e: ParseFloatError| format!("Failed to parse branch length '{}': {}", numstr, e))
+        .map_err(|e: ParseFloatError| {
+            format!("Failed to parse branch length '{}': {}", numstr, e)
+        })?;
+    // Rust parses an exponent past f64's range as infinity rather than as an
+    // error, and an infinite branch length turns the whole matrix into inf with
+    // NaN down the diagonal, since inf - inf is NaN.
+    if !value.is_finite() {
+        return Err(format!(
+            "Branch length '{}' at position {} is not a finite number.",
+            numstr, start
+        ));
+    }
+    Ok(value)
 }
 
 /// Flatten a `RawNode` tree into a flat `Vec<Node>` iteratively (no stack overflow).
