@@ -29,25 +29,30 @@ pub fn parse_newick(input: &str) -> Result<RawNode, String> {
 }
 
 /// Strip whitespace characters outside of quoted regions.
+///
+/// Works on raw bytes, which is safe for UTF-8 input: every byte of a
+/// multi-byte sequence has the high bit set and therefore never matches an
+/// ASCII quote or whitespace byte. Only whole ASCII bytes are dropped, so the
+/// remaining bytes are still valid UTF-8.
 fn strip_whitespace_outside_quotes(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+    let mut out: Vec<u8> = Vec::with_capacity(s.len());
     let mut in_quote = false;
     let mut quote_char = b'\0';
     for &b in s.as_bytes() {
         if in_quote {
-            out.push(b as char);
+            out.push(b);
             if b == quote_char {
                 in_quote = false;
             }
         } else if b == b'\'' || b == b'"' {
             in_quote = true;
             quote_char = b;
-            out.push(b as char);
+            out.push(b);
         } else if !b.is_ascii_whitespace() {
-            out.push(b as char);
+            out.push(b);
         }
     }
-    out
+    String::from_utf8(out).expect("dropping ASCII whitespace preserves UTF-8 validity")
 }
 
 /// Iterative Newick parser — no stack overflow on deep trees.
@@ -161,13 +166,13 @@ fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> Result<String, String> {
     if ch == b'\'' || ch == b'"' {
         let open_pos = *pos;
         *pos += 1; // consume opening quote
-        let mut label = String::new();
+        let mut label: Vec<u8> = Vec::new();
         let mut closed = false;
         while *pos < bytes.len() {
             if bytes[*pos] == ch {
                 // Check for escaped quote (doubled)
                 if *pos + 1 < bytes.len() && bytes[*pos + 1] == ch {
-                    label.push(ch as char);
+                    label.push(ch);
                     *pos += 2; // skip both quotes
                 } else {
                     *pos += 1; // consume closing quote
@@ -175,7 +180,7 @@ fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> Result<String, String> {
                     break;
                 }
             } else {
-                label.push(bytes[*pos] as char);
+                label.push(bytes[*pos]);
                 *pos += 1;
             }
         }
@@ -185,20 +190,33 @@ fn parse_label_bytes(bytes: &[u8], pos: &mut usize) -> Result<String, String> {
                 open_pos
             ));
         }
-        return Ok(label);
+        return label_from_utf8(label, open_pos);
     }
 
     // Unquoted label: read until delimiter
-    let mut label = String::new();
+    let start = *pos;
     while *pos < bytes.len() {
         let c = bytes[*pos];
         if c == b':' || c == b',' || c == b')' || c == b';' || c == b'[' || c.is_ascii_whitespace() {
             break;
         }
-        label.push(c as char);
         *pos += 1;
     }
-    Ok(label)
+    label_from_utf8(bytes[start..*pos].to_vec(), start)
+}
+
+/// Turn the raw bytes of a label into a `String`.
+///
+/// Labels are scanned byte-wise because every Newick delimiter is ASCII, but
+/// the bytes in between may encode any UTF-8 text and must be decoded as such
+/// rather than reinterpreted one byte at a time.
+fn label_from_utf8(bytes: Vec<u8>, start: usize) -> Result<String, String> {
+    String::from_utf8(bytes).map_err(|_| {
+        format!(
+            "Label starting at position {} is not valid UTF-8.",
+            start
+        )
+    })
 }
 
 /// Skip '[...]' comment blocks (NHX annotations, BEAST metadata, etc.).
@@ -338,6 +356,15 @@ mod tests {
         let raw = parse_newick(r#"("Taxon A":1.0,"Taxon B":2.0);"#).unwrap();
         assert_eq!(raw.children[0].name.as_deref(), Some("Taxon A"));
         assert_eq!(raw.children[1].name.as_deref(), Some("Taxon B"));
+    }
+
+    #[test]
+    fn test_non_ascii_labels_preserved() {
+        let raw = parse_newick("((Señor_Ñu:1.0,'β strain':2.0):0.5,日本株:3.0);").unwrap();
+        let inner = &raw.children[0];
+        assert_eq!(inner.children[0].name.as_deref(), Some("Señor_Ñu"));
+        assert_eq!(inner.children[1].name.as_deref(), Some("β strain"));
+        assert_eq!(raw.children[1].name.as_deref(), Some("日本株"));
     }
 
     #[test]
