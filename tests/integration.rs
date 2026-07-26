@@ -128,6 +128,37 @@ fn test_binary_empty_input_error() {
 }
 
 #[test]
+fn test_binary_rejects_out_of_range_precision() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "(A:1,B:2);").unwrap();
+
+    let (code, _stdout, stderr) = run(&["-p", "50000000", tree.to_str().unwrap()], None);
+    assert_ne!(code, 0, "an out-of-range precision should be rejected");
+    assert!(
+        stderr.contains("--precision"),
+        "stderr should name the flag: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "should fail cleanly, not panic: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_binary_rejects_zero_threads() {
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("t.nwk");
+    std::fs::write(&tree, "(A:1,B:2);").unwrap();
+
+    let (code, _stdout, stderr) = run(&["-t", "0", tree.to_str().unwrap()], None);
+    assert_ne!(code, 0, "--threads 0 should be rejected");
+    assert!(stderr.contains("--threads"), "stderr: {}", stderr);
+}
+
+#[test]
 fn test_binary_keeps_output_file_on_parse_error() {
     let dir = tempfile::tempdir().unwrap();
     let tree = dir.path().join("bad.nwk");

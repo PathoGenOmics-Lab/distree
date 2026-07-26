@@ -25,6 +25,13 @@ enum DistMode {
     Lmm,
 }
 
+/// Largest accepted `--precision`.
+///
+/// An f64 carries about 17 significant decimal digits, so anything past this
+/// is zero padding. The cap also keeps the formatting machinery inside the
+/// range it accepts: `{:.prec$}` panics outright on very large values.
+const MAX_PRECISION: usize = 30;
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -112,6 +119,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let output_path = matches.get_one::<String>("output");
     let precision = *matches.get_one::<usize>("precision").unwrap_or(&10);
 
+    if precision > MAX_PRECISION {
+        return Err(format!(
+            "--precision must be between 0 and {}, got {}. A 64-bit float holds about \
+             17 significant digits, so more decimals only add zeros.",
+            MAX_PRECISION, precision
+        )
+        .into());
+    }
+
     // Determine distance mode
     let mode = if do_lmm {
         if do_topology {
@@ -126,6 +142,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Configure thread pool
     if let Some(&num_threads) = matches.get_one::<usize>("threads") {
+        if num_threads == 0 {
+            // Rayon reads 0 as "pick the default", which silently ignores what
+            // the user asked for.
+            return Err("--threads must be at least 1. Omit the flag to use all cores.".into());
+        }
         rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build_global()
