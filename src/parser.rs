@@ -61,6 +61,10 @@ fn parse_subtree_iterative(bytes: &[u8], pos: &mut usize) -> Result<RawNode, Str
     let mut stack: Vec<Frame> = Vec::new();
 
     loop {
+        // A subtree may be preceded by comments: the rooting marker some
+        // programs emit ("[&R] (A,B);") or per-branch metadata ("(A,[&x=1]B)").
+        skip_ignorable_bytes(bytes, pos);
+
         // Decide what to parse at current position
         let current_node = if *pos < bytes.len() && bytes[*pos] == b'(' {
             // Internal node: push frame, advance past '('
@@ -128,6 +132,18 @@ fn parse_subtree_iterative(bytes: &[u8], pos: &mut usize) -> Result<RawNode, Str
 fn skip_whitespace_bytes(bytes: &[u8], pos: &mut usize) {
     while *pos < bytes.len() && bytes[*pos].is_ascii_whitespace() {
         *pos += 1;
+    }
+}
+
+/// Skip any run of whitespace and '[...]' comments.
+fn skip_ignorable_bytes(bytes: &[u8], pos: &mut usize) {
+    loop {
+        let before = *pos;
+        skip_whitespace_bytes(bytes, pos);
+        skip_comments_bytes(bytes, pos);
+        if *pos == before {
+            return;
+        }
     }
 }
 
@@ -381,6 +397,30 @@ mod tests {
         let root = flatten_raw(&raw, None, &mut nodes);
         assert!(nodes.len() > 5_000);
         assert!(nodes[root].parent.is_none());
+    }
+
+    #[test]
+    fn test_leading_rooting_comment() {
+        // IQ-TREE, MrBayes and BEAST prefix the tree with a rooting marker
+        let raw = parse_newick("[&R] ((A:1.0,B:2.0):0.5,C:3.0);").unwrap();
+        assert_eq!(raw.children.len(), 2);
+        assert_eq!(raw.children[1].name.as_deref(), Some("C"));
+        assert_eq!(raw.children[0].children[0].name.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn test_comment_before_label() {
+        let raw = parse_newick("(A:1.0,[&x=1]B:2.0);").unwrap();
+        assert_eq!(raw.children[1].name.as_deref(), Some("B"));
+        assert_eq!(raw.children[1].length, 2.0);
+    }
+
+    #[test]
+    fn test_comment_before_subtree() {
+        let raw = parse_newick("([&clade=1](A:1.0,B:2.0):0.5,C:3.0);").unwrap();
+        assert_eq!(raw.children.len(), 2);
+        assert_eq!(raw.children[0].children.len(), 2);
+        assert_eq!(raw.children[0].length, 0.5);
     }
 
     #[test]
