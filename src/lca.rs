@@ -1,9 +1,22 @@
 use crate::tree::Node;
 
+/// Marks "no such ancestor" in the binary-lifting table.
+///
+/// `Option<usize>` would be the obvious type, but it has no spare niche and so
+/// costs 16 bytes per entry against 8 for a bare `usize`. The table holds
+/// n·log n entries, which on a million-leaf tree is the difference between
+/// roughly 700 MB and 350 MB.
+const NO_ANCESTOR: usize = usize::MAX;
+
 /// Precomputed data for O(log n) LCA queries using binary lifting.
 pub struct LcaData {
-    /// Binary lifting table: `up[k][u]` is the 2^k-th ancestor of node `u`.
-    pub up: Vec<Vec<Option<usize>>>,
+    /// Binary lifting table, stored flat: `up[k * n + u]` is the 2^k-th
+    /// ancestor of node `u`, or [`NO_ANCESTOR`] if `u` has none.
+    up: Vec<usize>,
+    /// Node count, and therefore the stride of a row of `up`.
+    n: usize,
+    /// Number of levels held in `up`.
+    levels: usize,
     /// Cumulative branch-length distance from the root to each node.
     pub depth_len: Vec<f64>,
     /// Topological depth (number of edges) from the root to each node.
@@ -15,20 +28,19 @@ pub struct LcaData {
 /// Runs in O(n log n) time and O(n log n) space.
 pub fn build_lca_structure(root_idx: usize, nodes: &[Node]) -> LcaData {
     let n = nodes.len();
-    let max_log = if n <= 1 { 1 } else { ((n as f64).log2().ceil() as usize) + 1 };
+    let levels = if n <= 1 { 1 } else { ((n as f64).log2().ceil() as usize) + 1 };
     let mut depth_len = vec![0.0; n];
     let mut depth_top = vec![0; n];
-    let mut up: Vec<Vec<Option<usize>>> = vec![vec![None; n]; max_log];
+    let mut up: Vec<usize> = vec![NO_ANCESTOR; levels * n];
 
     {
         let mut stack = vec![root_idx];
         depth_len[root_idx] = 0.0;
         depth_top[root_idx] = 0;
-        up[0][root_idx] = None;
 
         while let Some(u) = stack.pop() {
             for &v in &nodes[u].children {
-                up[0][v] = Some(u);
+                up[v] = u;
                 depth_len[v] = depth_len[u] + nodes[v].length;
                 depth_top[v] = depth_top[u] + 1;
                 stack.push(v);
@@ -36,20 +48,33 @@ pub fn build_lca_structure(root_idx: usize, nodes: &[Node]) -> LcaData {
         }
     }
 
-    for k in 1..max_log {
+    for k in 1..levels {
         for u in 0..n {
-            up[k][u] = up[k - 1][u].and_then(|mid| up[k - 1][mid]);
+            let mid = up[(k - 1) * n + u];
+            up[k * n + u] = if mid == NO_ANCESTOR {
+                NO_ANCESTOR
+            } else {
+                up[(k - 1) * n + mid]
+            };
         }
     }
 
     LcaData {
         up,
+        n,
+        levels,
         depth_len,
         depth_top,
     }
 }
 
 impl LcaData {
+    /// The 2^k-th ancestor of `u`, or [`NO_ANCESTOR`].
+    #[inline]
+    fn ancestor(&self, k: usize, u: usize) -> usize {
+        self.up[k * self.n + u]
+    }
+
     /// Return the index of the Most Recent Common Ancestor (MRCA) of nodes `u` and `v`.
     ///
     /// Uses binary lifting for O(log n) queries.
@@ -60,28 +85,38 @@ impl LcaData {
         if self.depth_top[u] < self.depth_top[v] {
             std::mem::swap(&mut u, &mut v);
         }
-        let diff = self.depth_top[u] - self.depth_top[v];
-        let mut x = diff;
+        // Lift the deeper node until both sit at the same depth
+        let mut diff = self.depth_top[u] - self.depth_top[v];
         let mut k = 0;
-        while x > 0 {
-            if (x & 1) == 1 {
-                u = self.up[k][u].unwrap();
+        while diff > 0 {
+            if (diff & 1) == 1 {
+                u = self.ancestor(k, u);
+                assert_ne!(
+                    u, NO_ANCESTOR,
+                    "LCA: depth table disagrees with the tree; tree may be malformed"
+                );
             }
-            x >>= 1;
+            diff >>= 1;
             k += 1;
         }
         if u == v {
             return u;
         }
-        for k in (0..self.up.len()).rev() {
-            if let (Some(au), Some(av)) = (self.up[k][u], self.up[k][v]) {
-                if au != av {
-                    u = au;
-                    v = av;
-                }
+        // Climb in step as long as the ancestors differ; they meet one above
+        for k in (0..self.levels).rev() {
+            let au = self.ancestor(k, u);
+            let av = self.ancestor(k, v);
+            if au != av && au != NO_ANCESTOR && av != NO_ANCESTOR {
+                u = au;
+                v = av;
             }
         }
-        self.up[0][u].expect("LCA: could not find common ancestor; tree may be malformed")
+        let m = self.ancestor(0, u);
+        assert_ne!(
+            m, NO_ANCESTOR,
+            "LCA: could not find common ancestor; tree may be malformed"
+        );
+        m
     }
 }
 
@@ -89,6 +124,8 @@ impl LcaData {
 mod tests {
     use super::*;
     use crate::parser::{flatten_raw, parse_newick};
+    use crate::testutil::{random_newick, Rng};
+    use std::collections::HashSet;
 
     fn make(newick: &str) -> (Vec<crate::tree::Node>, usize) {
         let raw = parse_newick(newick).unwrap();
@@ -130,6 +167,53 @@ mod tests {
         let a = nodes.iter().position(|n| n.name.as_deref() == Some("A")).unwrap();
         assert_eq!(lca.mrca(a, a), a);
         assert_eq!(lca.mrca(root, root), root);
+    }
+
+    /// Walk to the root from `u`, then from `v` until the paths meet.
+    fn mrca_by_walking(nodes: &[Node], u: usize, v: usize) -> usize {
+        let mut seen = HashSet::new();
+        let mut cur = Some(u);
+        while let Some(x) = cur {
+            seen.insert(x);
+            cur = nodes[x].parent;
+        }
+        let mut cur = Some(v);
+        while let Some(x) = cur {
+            if seen.contains(&x) {
+                return x;
+            }
+            cur = nodes[x].parent;
+        }
+        panic!("no common ancestor between {} and {}", u, v);
+    }
+
+    #[test]
+    fn test_mrca_matches_walking_up_on_random_trees() {
+        let mut rng = Rng::new(0x2545_F491_4F6C_DD1D);
+
+        for case in 0..200 {
+            let n_leaves = 2 + rng.below(30);
+            let newick = random_newick(&mut rng, n_leaves);
+            let raw = parse_newick(&newick).unwrap();
+            let mut nodes = Vec::new();
+            let root = flatten_raw(&raw, None, &mut nodes);
+            let lca = build_lca_structure(root, &nodes);
+
+            for u in 0..nodes.len() {
+                for v in 0..nodes.len() {
+                    let expected = mrca_by_walking(&nodes, u, v);
+                    assert_eq!(
+                        lca.mrca(u, v),
+                        expected,
+                        "case {}: mrca({}, {}) in {}",
+                        case,
+                        u,
+                        v,
+                        newick
+                    );
+                }
+            }
+        }
     }
 
     #[test]

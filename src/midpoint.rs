@@ -157,6 +157,7 @@ mod tests {
     use super::*;
     use crate::parser::{flatten_raw, parse_newick};
     use crate::lca::build_lca_structure;
+    use crate::testutil::{random_newick, Rng};
 
     fn patristic_distance(
         leaf_i: usize,
@@ -165,50 +166,6 @@ mod tests {
     ) -> f64 {
         let m = lca.mrca(leaf_i, leaf_j);
         lca.depth_len[leaf_i] + lca.depth_len[leaf_j] - 2.0 * lca.depth_len[m]
-    }
-
-    /// xorshift64, so the randomised checks stay reproducible without pulling
-    /// in a dependency.
-    struct Rng(u64);
-
-    impl Rng {
-        fn next_u64(&mut self) -> u64 {
-            let mut x = self.0;
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            self.0 = x;
-            x
-        }
-
-        fn below(&mut self, n: usize) -> usize {
-            (self.next_u64() % n as u64) as usize
-        }
-
-        /// Zero one branch in seven: collapsing weakly supported branches
-        /// leaves plenty of them in real trees.
-        fn length(&mut self) -> f64 {
-            if self.below(7) == 0 {
-                return 0.0;
-            }
-            0.01 + (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64 * 2.0
-        }
-    }
-
-    /// Join random groups of 2 or 3 until one tree remains, so the sample
-    /// covers polytomies as well as strictly bifurcating trees.
-    fn random_newick(rng: &mut Rng, n_leaves: usize) -> String {
-        let mut pool: Vec<String> = (0..n_leaves)
-            .map(|i| format!("L{}:{:.6}", i, rng.length()))
-            .collect();
-        while pool.len() > 1 {
-            let arity = if pool.len() > 2 && rng.below(4) == 0 { 3 } else { 2 };
-            let children: Vec<String> = (0..arity)
-                .map(|_| pool.swap_remove(rng.below(pool.len())))
-                .collect();
-            pool.push(format!("({}):{:.6}", children.join(","), rng.length()));
-        }
-        format!("{};", pool.pop().unwrap())
     }
 
     /// Every node reachable exactly once, every child pointing back at its parent.
@@ -247,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_midpoint_random_trees() {
-        let mut rng = Rng(0x9E3779B97F4A7C15);
+        let mut rng = Rng::new(0x9E37_79B9_7F4A_7C15);
 
         for case in 0..300 {
             let n_leaves = 2 + rng.below(24);

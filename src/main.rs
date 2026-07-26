@@ -1,6 +1,8 @@
 mod lca;
 mod midpoint;
 mod parser;
+#[cfg(test)]
+mod testutil;
 mod tree;
 
 use clap::{Arg, ArgAction, Command};
