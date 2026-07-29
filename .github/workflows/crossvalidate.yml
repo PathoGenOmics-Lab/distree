@@ -1,0 +1,41 @@
+name: Cross-validate against ape
+
+# The committed fixtures in tests/fixtures/ let `cargo test` check six trees
+# against ape everywhere, with no R needed. This job runs the same comparison
+# over 250 freshly generated trees, which is the deeper check but needs an R
+# toolchain, so it runs weekly and on demand rather than on every push.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      trees:
+        description: "How many trees to generate"
+        required: false
+        default: "250"
+
+jobs:
+  crossvalidate:
+    name: distree vs ape
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::ape
+            any::phangorn
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Cross-validate
+        run: Rscript scripts/crossvalidate.R ${{ inputs.trees || 250 }} target/release/distree

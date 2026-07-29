@@ -1,0 +1,32 @@
+[package]
+name = "distree-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.distree]
+path = ".."
+
+# Detached from the parent workspace so `cargo build` at the repo root does not
+# try to build a nightly-only crate.
+[workspace]
+
+[[bin]]
+name = "parse_newick"
+path = "fuzz_targets/parse_newick.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "full_pipeline"
+path = "fuzz_targets/full_pipeline.rs"
+test = false
+doc = false
+bench = false

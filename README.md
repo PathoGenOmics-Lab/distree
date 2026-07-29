@@ -10,246 +10,138 @@
 [![PGO](https://img.shields.io/badge/PathoGenOmics-lab-red?)](https://github.com/PathoGenOmics-Lab)
 [![DOI](https://img.shields.io/badge/doi-10.5281%2Fzenodo.16811766-%23ff0077)](https://doi.org/10.5281/zenodo.16811766)
 
-__Paula Ruiz-Rodriguez<sup>1</sup>__ 
+__Paula Ruiz-Rodriguez<sup>1</sup>__
 __and Mireia Coscolla<sup>1</sup>__
 <br>
-<sub> 1. I<sup>2</sup>SysBio, University of Valencia-CSIC, FISABIO Joint Research Unit Infection and Public Health, Valencia, Spain </sub>  
-
-`distree` is a command-line tool written in Rust that extracts a distance matrix from a phylogenetic tree in Newick format. It is designed to handle large trees with thousands of sequences by using a low-memory, parallelized approach.
-
-## Features
-
-* **Patristic distances**: Computes the sum of branch lengths between every pair of leaves (taxa).
-* **Topological distances**: Ignores branch lengths and calculates the number of edges (nodes) between leaves.
-* **LMM (var-covar) matrix**: Outputs the depth (in branch-length units) of the lowest common ancestor (MRCA) for each pair of leaves.
-* **Midpoint rooting**: Optionally re-roots the tree at its midpoint before computing distances.
-* **Low memory footprint**: Streams each row to output immediately, without holding the full matrix in RAM.
-* **Parallel computation**: Uses multiple CPU cores to compute each row in parallel, reducing runtime for large datasets.
-
-## Typical Applications
-
-1. **Comparative Genomics & Evolutionary Studies**
-
-   * **Patristic Distances**: When analyzing evolutionary divergence, the sum of branch lengths between two sequences reflects their accumulated genetic change. This is useful for constructing distance-based phylogenetic trees (e.g., Neighbor-Joining), clustering sequences into operational taxonomic units (OTUs), or computing pairwise divergence metrics for downstream analyses.
-   * **Topological Distances**: In cases where branch-length estimates are unreliable or not meaningful (e.g., when raw sequence counts are compared), using topological distances (number of nodes between leaves) can provide a rough measure of relatedness. This can be helpful for broad clustering or when using simpler distance-based algorithms that only require tree shape.
-
-2. **Epidemiology & Public Health**
-
-   * **Rapid Outbreak Tracking**: For pathogens such as bacteria or viruses, building a phylogenetic tree from whole-genome data can be computationally expensive to revisit. Extracting a distance matrix allows quick pairwise comparisons to identify clusters of closely related strains (e.g., potential transmission clusters) without recomputing distances from raw alignments.
-   * **Contact Tracing & Transmission Networks**: If you have a large outbreak dataset, computing patristic distances between samples quickly helps identify subclusters or “clades” of interest (e.g., to infer likely transmission chains). Similarly, topological distances might approximate epidemiological closeness if branch-length estimates vary widely.
-
-3. **Microbiome & Environmental Sequencing**
-
-   * **OTU/ASV Clustering**: In 16S rRNA amplicon studies, one often constructs a phylogenetic tree of all amplicon sequence variants (ASVs). A distance matrix (patristic or topological) can feed into beta-diversity metrics (e.g., UniFrac requires branch lengths). Here, `distree` can quickly compute pairwise distances after the tree is built, facilitating ordination (PCoA) or clustering of samples by their phylogenetic composition.
-   * **Phylogenetic Diversity**: Calculating the sum of branch lengths between taxa supports metrics like Faith’s Phylogenetic Diversity or UniFrac. `distree` can produce the matrix needed for those algorithms without re-traversing the tree multiple times.
-
-4. **Machine Learning & Dimensionality Reduction**
-
-   * **Input for MDS/t-SNE/UMAP**: Many machine learning or visualization methods (Multidimensional Scaling, t-SNE, UMAP) accept a distance matrix as input. Converting a large phylogeny into a pairwise distance matrix enables embedding taxa into low-dimensional space, highlighting evolutionary relationships or clusters.
-   * **Distance-Based Feature Engineering**: In trait-based prediction models (e.g., predicting phenotype from genotype), patristic distances can be used as kernel features. `distree` can produce the kernel matrix needed for Gaussian Process Regression or support vector machines (SVM) with a custom kernel.
-
-5. **Benchmarking & Simulation Studies**
-
-   * **Comparing Tree-Building Methods**: When evaluating different phylogenetic inference methods, it is often necessary to compute distances from each resulting tree. `distree` can generate distance matrices for multiple trees rapidly, enabling head-to-head comparisons.
-   * **Simulation Validation**: In simulation frameworks (e.g., Seq-Gen), one generates a tree, simulates sequence data, reconstructs a tree, and compares distance matrices. Having a fast, consistent tool to extract matrices accelerates simulation benchmarks.
-
-## Installation
-
-### 🐍 Using conda
-```
-conda install -c bioconda distree
-```
-### 🐍 Using mamba
-```
-mamba install -c bioconda distree
-```
-### Compilation
-1. Ensure you have [Rust](https://www.rust-lang.org/tools/install) installed.
-
-2. Clone or download the `distree` repository.
-
-3. In the project root, run:
-
-   ```bash
-   cargo build --release
-   ```
-
-4. The optimized binary will be available at:
-
-   ```bash
-   target/release/distree
-   ```
-
-## Usage
-
-```bash
-Usage: distree [OPTIONS] <phylogeny>
-
-Arguments:
-  <phylogeny>            Path to the tree file in Newick format
-
-Options:
-  --format <FORMAT>      Tree file format (only 'newick' is supported) [default: newick]
-  --midpoint             Midpoint-root the tree before computing distances
-  --lmm                  Produce the var-covar matrix C (depth of the MRCA)
-  --topology             Ignore branch lengths; use purely topological distances
-  -o, --output <FILE>     Path to write the TSV output file (defaults to stdout)
-  -h, --help             Print help information
-  -V, --version          Print version information
-```
-
-### Argument & Option Details
-
-* `<phylogeny>`: Path to the input tree in Newick format. Leaf labels must be unique and not contain tabs or newline characters.
-
-* `--format <FORMAT>`
-
-  * Currently only `newick` is supported. Future versions may support other formats (e.g., Nexus, PhyloXML).
-  * This option exists to maintain CLI consistency; it does not change parsing for now.
-
-* `--midpoint`
-
-  * Before computing any distances, the tree will be re-rooted at its midpoint (the point halfway along the longest path between any two leaves). Useful when no outgroup is known or when you want a balanced root for downstream analyses.
-  * Use this if your downstream distance metric expects an unrooted, centrically-rooted tree.
-
-* `--lmm`
-
-  * “LMM” stands for var-covar matrix (matrix C) in Phylogenetic Comparative Methods. Each entry (i, j) equals the depth (distance from root) of the lowest common ancestor of leaf i and leaf j. This matrix is often used in linear mixed models (LAMM, PGLS) to account for phylogenetic covariance.
-  * When specified, LMM distances override `--topology`. The output is a matrix of MRCA depths, not pairwise distances.
-
-* `--topology`
-
-  * Ignores branch lengths. Each entry (i, j) equals the number of edges between leaf i and leaf j:
-
-  * Use this mode if branch-lengths are not meaningful or if you only care about tree shape.
-
-* `-o, --output <FILE>`
-
-  * Write the TSV distance matrix to the specified path. If omitted, the matrix is printed to standard output.
-  * Example: `-o distances.tsv`.
-
-## Output Format
-
-The tool outputs a tab-separated values (TSV) matrix.
-
-1. The first line is a header with leaf labels sorted alphabetically, preceded by an empty cell (for row labels).
-
-2. Each subsequent line begins with a leaf label (sorted alphabetically), followed by N columns of distances (depending on the chosen mode) to every other leaf in the same sorted order.
-
-Example (patristic distances):
-
-```LeafA LeafB	LeafC
-LeafA	0.000	5.200	3.100
-LeafB	5.200	0.000	4.400
-LeafC	3.100	4.400	0.000
-```
-
-Example (topological distances):
-
-```LeafA LeafB	LeafC	LeafD
-LeafA	0	2	3	1
-LeafB	2	0	1	3
-LeafC	3	1	0	4
-LeafD	1	3	4	0
-```
-
-Example (LMM depths):
-
-```LeafA LeafB	LeafC
-LeafA	7.000	3.000	5.000
-LeafB	3.000	7.000	2.500
-LeafC	5.000	2.500	7.000
-```
-
-## Detailed Use Cases
-
-### 1. Producing a Patristic Distance Matrix
-
-**Scenario**: You have a large set of bacterial genomes, build a phylogenetic tree with reliable branch lengths (e.g., using RAxML or IQ-TREE), and now need the pairwise patristic distances to feed into clustering, PCoA, or hierarchical analyses.
-
-**Command**:
-
-```bash
-./distree tree.nwk -o patristic.tsv
-```
-
-**Why**: Downstream tools like SciKit-Learn (for MDS) or R’s `ape::cmdscale()` expect a distance matrix. Patristic distances reflect evolutionary time or change.
-
-### 2. Computing Topological Distances Only
-
-**Scenario**: You have a phylogenetic tree where branch lengths come from different sources or are not directly comparable (e.g., concatenated multi-locus data). You prefer to measure closeness by number of shared nodes instead.
-
-**Command**:
-
-```bash
-./distree --topology tree.nwk -o topo_distances.tsv
-```
-
-**Why**: Topological distances emphasize tree structure without scaling by substitution rate or time. Useful when comparing tree shapes or for rapid, coarse clustering when exact branch lengths are noisy.
-
-### 3. Generating an LMM (Var-Covar) Matrix for Comparative Methods
-
-**Scenario**: You are performing phylogenetic generalized least squares (PGLS) in R (`caper::pgls` or `nlme::gls`) and need the phylogenetic variance-covariance matrix. Each entry C\[i,j] is the distance from root to MRCA(i, j).
-
-**Command**:
-
-```bash
-./distree --lmm tree.nwk -o varcovar.tsv
-```
-
-**Why**: In comparative models, traits shared due to common ancestry introduce covariance. This LMM matrix directly encodes that covariance structure for all taxa.
-
-### 4. Using Midpoint Rooting Before Distance Extraction
-
-**Scenario**: Your input tree is unrooted or rooted arbitrarily (e.g., by outgroup choice). You want a symmetric distance matrix that does not depend on outgroup, so you midpoint-root the tree first.
-
-**Command**:
-
-```bash
-./distree --midpoint tree.nwk -o midrooted_distances.tsv
-```
-
-**Why**: Midpoint rooting places the root at a balanced position. Downstream patristic or LMM calculations become more interpretable if the root is centrally placed.
-
-### 5. Downstream Dimensionality Reduction & Visualization
-
-**Scenario**: You intend to visualize relationships among taxa via MDS or t-SNE. You need a distance matrix as input.
-
-**Command**:
-
-```bash
-./distree tree.nwk | Rscript -e "dist <- as.matrix(read.table('file:///dev/stdin', header=TRUE, row.names=1)); mds <- cmdscale(dist); plot(mds)"
-```
-
-**Why**: Feeding the distance matrix directly into R for MDS (multidimensional scaling) or UMAP allows you to view clustering of taxa in two or three dimensions.
-
-## Performance and Resource Considerations
-
-* **Memory**: `distree` streams one row at a time. At any given moment, only a single vector of length N (number of leaves) resides in memory, plus O(M log M) for LCA structures, where M is the total number of nodes. For trees with tens of thousands of taxa, memory usage remains low.
-
-* **Parallelism**: Each row’s distance computations are parallelized across available CPU cores via Rayon. For N taxa, computing N rows (each of size N) takes O(N^2 / #cores) time.
-
-* **Disk I/O**: If writing to a file via `--output`, a buffered writer (`BufWriter`) minimizes I/O calls. Streaming directly to stdout also remains efficient.
-
-## Troubleshooting and Tips
-
-* **Invalid Newick**: Ensure your Newick tree is syntactically correct (matching parentheses, semicolon at end). `distree` will error if parsing fails.
-* **Whitespace in Labels**: Leaf labels should not contain spaces, tabs, or newline characters, as these break the TSV format. Replace spaces with underscores if needed.
-* **Choosing Distance Type**:
-
-  * Use `--lmm` if performing phylogenetic comparative analyses (e.g., trait evolution, PGLS).
-  * Use default patristic distances for standard evolutionary distance-based methods (e.g., Neighbor-Joining, clustering).
-  * Use `--topology` for quick, coarse tree-shape comparisons when branch lengths are unreliable.
-* **Large Trees**: For very large trees (e.g., >50,000 leaves), ensure you have enough CPU cores. You may run `distree` on a compute node or multi-core server to exploit parallel speedups.
+<sub> 1. I<sup>2</sup>SysBio, University of Valencia-CSIC, FISABIO Joint Research Unit Infection and Public Health, Valencia, Spain </sub>
+
+`distree` reads a phylogenetic tree in Newick format and writes the pairwise
+distance between every pair of tips: **patristic** (summed branch lengths),
+**topological** (edge counts), or the **variance-covariance** matrix a
+comparative model wants. Rows stream out as they are computed, so memory grows
+with the number of tips rather than with the square of it.
+
+📖 **Full documentation: <https://pathogenomics-lab.github.io/distree/>**
+
+| Page | Description |
+|:-----|:------------|
+| **[Quick start](https://pathogenomics-lab.github.io/distree/getting-started/quickstart/)** | The handful of commands most runs actually use |
+| **[Tutorial](https://pathogenomics-lab.github.io/distree/tutorial/)** | A worked outbreak investigation, tree to transmission clusters |
+| **[Input](https://pathogenomics-lab.github.io/distree/guide/input/)** | What Newick is accepted, what is rejected, and why |
+| **[Distance modes](https://pathogenomics-lab.github.io/distree/guide/distances/)** | Patristic, topological and var-covar, on one worked example |
+| **[Midpoint rooting](https://pathogenomics-lab.github.io/distree/guide/rooting/)** | When the root changes the answer, and when it cannot |
+| **[Output](https://pathogenomics-lab.github.io/distree/guide/output/)** | TSV, PHYLIP lower triangle, NumPy arrays, precision |
+| **[CLI reference](https://pathogenomics-lab.github.io/distree/guide/cli/)** | Every flag, every default, every message |
+| **[How it works](https://pathogenomics-lab.github.io/distree/how-it-works/algorithm/)** | The parser, the LCA structure, the streaming loop |
+| **[Performance](https://pathogenomics-lab.github.io/distree/how-it-works/performance/)** | Measured speed, memory and thread scaling |
+| **[Recipes](https://pathogenomics-lab.github.io/distree/recipes/)** | PCoA, transmission clusters, PGLS, neighbour-joining |
 
 ---
 
-*distree* is a versatile tool for extracting various phylogenetic distance matrices from large trees. By combining midpoint rooting, multiple distance modes, and parallel streaming, it caters to evolutionary, comparative, and clustering analyses without overwhelming memory.
+## Installation
+
+```bash
+# Bioconda
+conda install -c bioconda distree
+
+# From source
+cargo build --release
+```
+
+Prebuilt binaries for Linux and macOS, x86-64 and arm64, are on the
+[releases page](https://github.com/PathoGenOmics-Lab/distree/releases).
+
+## Quick start
+
+```bash
+# Patristic distances, as a tab-separated matrix
+distree tree.nwk -o distances.tsv
+
+# Six decimals across eight threads, PHYLIP lower triangle
+distree tree.nwk --lower -p 6 -t 8 -o distances.phy
+
+# Edge counts instead of branch lengths
+distree tree.nwk --topology -o topology.tsv
+
+# The variance-covariance matrix for PGLS, midpoint-rooted
+distree tree.nwk --midpoint --lmm -o varcovar.tsv
+
+# A NumPy array: exact, half the size of text, and 2.6x faster
+distree tree.nwk --npy -o distances.npy
+
+# The condensed vector scipy.cluster.hierarchy reads directly
+distree tree.nwk --lower --npy -o condensed.npy
+
+# Just the samples in a list, from a gzipped tree
+distree tree.nwk.gz --taxa cohort.txt --stats -o cohort.tsv
+
+# From stdin
+gunzip -c tree.nwk.gz | distree - -o distances.tsv
+```
+
+## What it does
+
+| | |
+|:--|:--|
+| **Patristic** | The sum of branch lengths on the path between two tips |
+| **Topological** | The number of edges on that path, ignoring branch lengths |
+| **Variance-covariance** | The root-to-MRCA distance for each pair, the `C` matrix of a PGLS or phylogenetic mixed model |
+| **Rooting** | Optional midpoint rooting, which matters for `--lmm` and cannot matter for the other two |
+| **Formats** | Square TSV, PHYLIP lower triangle, or a NumPy `.npy` array |
+| **Input** | Newick from a file or stdin, plain or gzipped, with quoted labels, polytomies, NHX and BEAST comments, and UTF-8 tip names |
+| **Subsets** | `--taxa` restricts the matrix to a list of tips, with the distances the full tree gives |
+| **Scale** | Rows stream out as they are computed; memory tracks the tips, not the matrix |
+| **Parallelism** | Distances and their formatting both spread across cores |
+
+It works on the tree you give it: it does not build one, does not read an
+alignment, and does not cluster the matrix for you. It also does not guess. A
+truncated tree, a file holding several trees, an unclosed quote or a label with
+a tab in it are rejected with the position, rather than turned into a matrix
+that looks right and is not.
+
+## Performance
+
+Balanced trees, `-p 6 --lower`, release build on an Apple M4 Pro with 14 cores.
+
+| Tips | Cells | Time | Peak memory |
+|--:|--:|--:|--:|
+| 1,000 | 0.5 M | 0.00 s | 11 MB |
+| 8,000 | 32 M | 0.13 s | 32 MB |
+| 20,000 | 200 M | 1.02 s | 35 MB |
+
+Memory flattens out because nothing holds the matrix: past a few thousand tips
+it is the LCA table plus one batch of rows. `--npy` is another 2.6x on top, at
+full precision and half the file size. Full numbers, thread scaling and the
+memory arithmetic are
+[here](https://pathogenomics-lab.github.io/distree/how-it-works/performance/).
+
+## Correctness
+
+Distances are cross-validated against R's
+[ape](https://cran.r-project.org/package=ape) over generated trees:
+`cophenetic.phylo` for patristic, `vcv.phylo` for variance-covariance,
+`cophenetic.phylo` over unit branch lengths for edge counts, and
+`phangorn::midpoint` for the rooting. All four agree to under 1e-9, which is the
+text round-trip, and exactly for edge counts. The parser and the pipeline are
+fuzzed. See
+[Contributing](https://pathogenomics-lab.github.io/distree/about/contributing/).
+
+## Citation
+
+> Ruiz-Rodriguez P, Coscolla M. *distree: distance matrices from a phylogeny.*
+> PathoGenOmics Lab. [doi:10.5281/zenodo.16811766](https://doi.org/10.5281/zenodo.16811766)
+
+Please record the version and the mode you used: a patristic matrix, a
+topological one and a variance-covariance matrix are three different objects.
+
+## License
+
+[GPL-3.0](https://github.com/PathoGenOmics-Lab/distree/blob/main/LICENSE).
 
 ---
 <h2 id="contributors" align="center">
 
-✨ [Contributors]((https://github.com/PathoGenOmics-Lab/AMAP/graphs/contributors))
+✨ [Contributors](https://github.com/PathoGenOmics-Lab/distree/graphs/contributors)
 </h2>
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
@@ -272,7 +164,7 @@ distree is developed with ❤️ by:
       <a href="" title="Data">🔣</a>
       <a href="" title="Desing">🎨</a>
       <a href="" title="Tool">🔧</a>
-    </td> 
+    </td>
     <td align="center">
       <a href="https://github.com/mireiacoscolla">
         <img src="https://avatars.githubusercontent.com/u/29301737?v=4&s=100" width="100px;" alt=""/>
@@ -285,7 +177,7 @@ distree is developed with ❤️ by:
       <a href="" title="Mentoring">🧑‍🏫</a>
       <a href="" title="Research">🔬</a>
       <a href="" title="User Testing">📓</a>
-    </td> 
+    </td>
   </tr>
 </table>
 
