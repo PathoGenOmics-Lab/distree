@@ -3,7 +3,7 @@ message: "If you use this software, please cite it as below."
 title: "distree"
 version: 1.0.1
 doi: 10.5281/zenodo.16811766
-date-released: 2026-04-04
+date-released: 2026-07-29
 url: "https://github.com/PathoGenOmics-Lab/distree"
 repository-code: "https://github.com/PathoGenOmics-Lab/distree"
 license: GPL-3.0

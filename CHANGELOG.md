@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.1] - 2026-04-04
+## [1.0.1] - 2026-07-29
 
 ### Fixed
 - Branch lengths that are not finite are rejected. `A:1e910` parses as infinity rather than failing, and an infinite depth made every distance `inf` with `NaN` down the diagonal, reported with a success exit code. The run also stops when finite depths are large enough that `d_i + d_j` overflows
