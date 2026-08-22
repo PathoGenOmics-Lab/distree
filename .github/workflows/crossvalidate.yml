@@ -18,6 +18,11 @@ on:
         required: false
         default: "250"
 
+# Only what it needs: checkout, a build and a comparison script. Nothing here
+# writes back to the repository.
+permissions:
+  contents: read
+
 jobs:
   crossvalidate:
     name: distree vs ape
