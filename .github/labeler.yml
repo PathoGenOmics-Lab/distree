@@ -42,6 +42,10 @@ tests:
           - "fuzz/**"
           - "scripts/crossvalidate.R"
           - "src/testutil.rs"
+          # cargo-mutants' scope and timeouts. Left out at first, so the pull
+          # request that tuned them arrived with no label at all, which is the
+          # failure this file's own comment warns about one section down.
+          - ".cargo/**"
 
 packaging:
   - changed-files:
