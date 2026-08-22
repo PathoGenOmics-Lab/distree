@@ -1,0 +1,83 @@
+# Dependency updates.
+#
+# Shaped after get_MNV's, which was itself a second attempt: the first opened one
+# pull request per dependency and led with major bumps, and all of them were
+# closed unread. The updates were not the problem, the shape was. So:
+#
+#   * monthly, not weekly
+#   * grouped, so one pull request carries a whole ecosystem's routine bumps
+#   * majors kept apart, in their own pull request, because those change APIs
+#     and want a person
+#
+# The minor and patch group merges itself once CI passes; see
+# .github/workflows/dependabot-auto-merge.yml. The major group never does.
+#
+# `schedule` here is Dependabot's own timer, not a cron in GitHub Actions: no
+# workflow in this repository runs on a schedule.
+#
+# Security updates are a separate mechanism, enabled in the repository settings
+# and unaffected by any of this: a vulnerable dependency gets its own pull
+# request the day the advisory lands, major or not.
+
+version: 2
+
+updates:
+  # The crate itself. Four dependencies, so the routine group is usually one or
+  # two lines, which is the point.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "rust"]
+    commit-message:
+      prefix: "cargo"
+    groups:
+      cargo-routine:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      cargo-major:
+        patterns: ["*"]
+        update-types: ["major"]
+
+  # The documentation site's build dependencies, in requirements-docs.txt.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels: ["dependencies", "documentation"]
+    commit-message:
+      prefix: "docs"
+    groups:
+      docs-routine:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      docs-major:
+        patterns: ["*"]
+        update-types: ["major"]
+
+  # The actions the workflows pin. These go stale silently: a deprecated runner
+  # image or a Node version dropped from an action is only noticed when a job
+  # starts warning, or fails.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "actions"
+    groups:
+      actions-routine:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      actions-major:
+        patterns: ["*"]
+        update-types: ["major"]
+
+# fuzz/ is deliberately not listed. It is a separate workspace that resolves its
+# own versions, it needs a nightly toolchain, and CI never builds it. A bump
+# there would be merged on the strength of a green run that never compiled the
+# thing being bumped, which is worse than not bumping it. Update it by hand when
+# a fuzzing session is actually planned.

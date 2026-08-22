@@ -1,0 +1,72 @@
+# Mutation testing configuration.
+#
+# `cargo mutants` changes the source (flips a comparison, replaces a function
+# body with a default) and reports whether the test suite notices. A surviving
+# mutant is a piece of logic no test distinguishes: either a test is missing, or
+# the logic does not do anything, and both are worth knowing.
+#
+# It is advisory. A surviving mutant is a question, not a defect, and it never
+# fails CI.
+
+# The library: everything that decides what a distance is. `src/main.rs` is
+# outside this on purpose. It is argument handling, warning text and output
+# plumbing, and most of its mutants are equivalent: the batch and buffer size
+# constants change how fast the run is and not what it prints, and the warning
+# conditions change wording. The integration tests cover its behaviour
+# end-to-end, which is the right granularity for a command line.
+#
+# The one part of main.rs worth mutating is `write_fixed_fast`, and it does not
+# need this: it is checked directly against the standard formatter over 200,000
+# random values, along the rounding boundaries at every precision, and on
+# subnormals and signed zero. A mutation of it fails that immediately.
+examine_globs = [
+    "src/lib.rs",
+    "src/parser.rs",
+    "src/lca.rs",
+    "src/midpoint.rs",
+    "src/tree.rs",
+]
+
+# Generated trees for the randomised checks, not logic anything depends on.
+exclude_globs = ["src/testutil.rs"]
+
+# The unit tests finish in well under a second, so anything still running after
+# a minute is a mutant that made the code loop rather than one under test. There
+# are twenty of those in the parser, which is what a mutated `pos += 1` in a
+# byte scanner does, and they are reported as timeouts rather than survivors.
+timeout_multiplier = 5.0
+minimum_test_timeout = 60
+
+# Ten mutants survive in this scope as of the run that wrote this file, out of
+# roughly 250. They fall into three groups, named rather than chased:
+#
+# - Four are equivalent, in the sense that the mutated code is still correct:
+#   `depth_top[u] < depth_top[v]` in `mrca` becoming `<=` only changes which of
+#   two equally deep nodes is swapped; `dist_u > best_dist` in `farthest_from`
+#   becoming `>=` picks a different tie among equally distant leaves, and both
+#   are valid diameter endpoints; and `path.len() - 1` in `midpoint_root`
+#   becoming `+` or `/` is unreachable, because the loop always returns from
+#   inside before it runs off the end.
+#
+# - One is the `+ 1` in `levels`, and it took a while to accept. Two attempts
+#   were made to kill it, with a ladder and with two deep chains, and both
+#   passed with the level removed. The reason is that the second phase of `mrca`
+#   is a greedy descent that accumulates jumps rather than taking one: it can
+#   climb 2^levels - 1 in total, which is at least n - 1, which is at least the
+#   depth of any tree with n nodes. `ceil(log2 n)` levels is therefore already
+#   sufficient and the `+ 1` is margin. It stays, because margin on the
+#   structure the whole tool depends on is worth eight bytes a node.
+#
+# - Three are in `skip_whitespace_bytes`, which looks dead: the whitespace
+#   outside quoted labels is already gone by the time the parser runs. It is not
+#   dead. Making it panic if it ever skipped anything, and running the suite,
+#   found an input from the torture test that reaches it, because a malformed
+#   quote leaves whitespace inside what the stripper took for a quoted region.
+#   No unit test reaches it, which is what the mutants are reporting.
+#
+# - The last two only change which error message an invalid tree gets, in
+#   `parse_newick` and `parse_label_bytes`. Both inputs are rejected either way.
+#
+# `test_lifting_table_is_deep_enough_for_a_ladder` in src/lca.rs came out of
+# this run: it does not kill a mutant, but nothing else put a tree that deep
+# through the LCA path at all.
