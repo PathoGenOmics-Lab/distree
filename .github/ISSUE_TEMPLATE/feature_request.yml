@@ -1,0 +1,38 @@
+name: Feature request
+description: Something distree should do and does not
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        distree works on the tree you give it: it does not build one, does not
+        read an alignment, and does not cluster the matrix. Requests that stay
+        inside that are the ones most likely to happen.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: >-
+        The analysis, not the feature. What the tool should let you do is much
+        easier to judge than a flag on its own, and there is often a way to do
+        it already.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: A flag, an output format, a mode. A sketch of the command line helps.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: How you are doing it now
+      description: >-
+        The workaround, if there is one, and where it falls down. "I pipe it
+        through awk and it breaks on labels with spaces" says more than a
+        paragraph of rationale.

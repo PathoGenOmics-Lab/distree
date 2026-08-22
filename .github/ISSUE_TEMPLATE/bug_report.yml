@@ -1,0 +1,104 @@
+name: Bug report
+description: distree crashed, refused a tree it should accept, or produced numbers that are wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        The failures worth reporting here are not only the loud ones. A run that
+        finishes and returns a matrix that looks entirely reasonable and is
+        wrong is the more expensive kind, and the harder one to notice, so a
+        report saying "these distances disagree with `ape::cophenetic` and here
+        are both" is worth more than a stack trace.
+
+        If distree **refused** your tree, check
+        [Input](https://pathogenomics-lab.github.io/distree/guide/input/) first:
+        several things it used to accept are now rejected on purpose, because
+        accepting them produced a wrong matrix rather than an error.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `distree --version`.
+      placeholder: distree 1.0.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it was installed
+      options:
+        - Bioconda (conda install -c bioconda distree)
+        - Binary from the Releases page
+        - Built from source (cargo build --release)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux (x86-64)
+        - Linux (arm64)
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command
+      description: The whole thing, with every flag.
+      placeholder: distree tree.nwk --midpoint --lmm -p 8 -o varcovar.tsv
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what you got
+      description: >-
+        If the numbers are wrong rather than absent, say how you know: the tool
+        you compared against, the pair of tips that disagrees, and both values.
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: What it printed
+      description: Everything on stderr, including any warnings before the error.
+      render: shell
+
+  - type: textarea
+    id: tree
+    attributes:
+      label: The tree
+      description: >-
+        The smaller the better. A tree with the labels replaced by S1, S2, ...
+        usually still reproduces the problem, and a generated tree of the same
+        shape often does too.
+
+
+        **Do not attach anything identifiable.** Sample names in a Newick file
+        are data like any other.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am on the latest release, or I have said above why not.
+          required: true
+        - label: The tree above reproduces it, or I have said why I cannot share one.
+          required: true

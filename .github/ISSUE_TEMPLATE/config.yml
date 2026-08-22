@@ -1,0 +1,22 @@
+# Blank issues stay available. The forms cover the reports that arrive most
+# often, but a small tool gets questions that fit no form, and having nowhere to
+# put them is worse than an unstructured issue.
+#
+# There is no Q&A link here because Discussions are not enabled on this
+# repository. If they are turned on, add one: an answer in Q&A gets marked as the
+# answer and the next person finds it, while an answer in an issue is seen once.
+blank_issues_enabled: true
+
+contact_links:
+  - name: Documentation
+    url: https://pathogenomics-lab.github.io/distree/
+    about: The CLI reference, the output formats, and what the three distance modes mean.
+  - name: Tutorial
+    url: https://pathogenomics-lab.github.io/distree/tutorial/
+    about: A worked outbreak investigation, from the tree to transmission clusters.
+  - name: What distree accepts and rejects
+    url: https://pathogenomics-lab.github.io/distree/guide/input/
+    about: Worth a look first if it refused your tree.
+  - name: Report a security vulnerability
+    url: https://github.com/PathoGenOmics-Lab/distree/security/advisories/new
+    about: Please report vulnerabilities privately rather than in a public issue.

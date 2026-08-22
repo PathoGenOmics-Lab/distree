@@ -3,11 +3,14 @@ name: Cross-validate against ape
 # The committed fixtures in tests/fixtures/ let `cargo test` check six trees
 # against ape everywhere, with no R needed. This job runs the same comparison
 # over 250 freshly generated trees, which is the deeper check but needs an R
-# toolchain, so it runs weekly and on demand rather than on every push.
+# toolchain, so it is run on purpose rather than on every push.
+#
+# By hand only, no schedule. A build-or-test job on a timer spends minutes every
+# week and reports failures nobody asked for, and nobody is watching when it
+# goes wrong. Run it before a release, or after touching anything the distances
+# depend on.
 
 on:
-  schedule:
-    - cron: "0 6 * * 1"
   workflow_dispatch:
     inputs:
       trees:

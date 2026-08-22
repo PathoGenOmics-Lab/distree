@@ -309,10 +309,9 @@ fn read_npy(path: &std::path::Path) -> (String, Vec<f64>) {
 
     let data = &bytes[10 + header_len..];
     assert_eq!(data.len() % 8, 0, "payload is whole f64s");
-    let values = data
-        .chunks_exact(8)
-        .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
-        .collect();
+    let (chunks, rest) = data.as_chunks::<8>();
+    assert!(rest.is_empty(), "payload is whole f64s");
+    let values = chunks.iter().copied().map(f64::from_le_bytes).collect();
     (header, values)
 }
 

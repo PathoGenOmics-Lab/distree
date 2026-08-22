@@ -188,6 +188,56 @@ mod tests {
     }
 
     #[test]
+    fn test_lifting_table_is_deep_enough_for_a_ladder() {
+        // The table needs a level for every power of two up to the deepest node.
+        // The random trees below are balanced enough that one level short still
+        // answers every query, so nothing there notices if `levels` is computed
+        // too small. A ladder is the worst case: depth grows with the node count
+        // rather than its logarithm.
+        //
+        // Only pairs involving the deepest leaf are checked, which is where a
+        // short table goes wrong and is O(depth) rather than O(nodes squared).
+        let depth = 400;
+        let mut newick = String::new();
+        for _ in 0..depth {
+            newick.push('(');
+        }
+        newick.push_str("A:1");
+        for i in 0..depth {
+            newick.push_str(&format!(",L{}:1):1", i));
+        }
+        newick.push(';');
+
+        let (nodes, root) = make(&newick);
+        let lca = build_lca_structure(root, &nodes);
+
+        let deepest = (0..nodes.len()).max_by_key(|&i| lca.depth_top[i]).unwrap();
+        assert!(
+            lca.depth_top[deepest] >= depth,
+            "expected a ladder at least {} deep, got {}",
+            depth,
+            lca.depth_top[deepest]
+        );
+
+        for other in 0..nodes.len() {
+            assert_eq!(
+                lca.mrca(deepest, other),
+                mrca_by_walking(&nodes, deepest, other),
+                "mrca(deepest, {}) on a ladder {} deep",
+                other,
+                depth
+            );
+            assert_eq!(
+                lca.mrca(other, deepest),
+                mrca_by_walking(&nodes, other, deepest),
+                "mrca({}, deepest) on a ladder {} deep",
+                other,
+                depth
+            );
+        }
+    }
+
+    #[test]
     fn test_mrca_matches_walking_up_on_random_trees() {
         let mut rng = Rng::new(0x2545_F491_4F6C_DD1D);
 
