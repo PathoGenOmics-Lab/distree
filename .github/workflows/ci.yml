@@ -9,6 +9,13 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Only what it needs: this checks out the code, builds it and runs the tests,
+# and writes nothing back. Declared rather than inherited, because the
+# repository default is a setting that can change without anyone revisiting the
+# workflows it silently widens.
+permissions:
+  contents: read
+
 jobs:
   check:
     name: Check & Test
